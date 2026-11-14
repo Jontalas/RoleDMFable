@@ -7,9 +7,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
-    <!-- core/ y tests/ son proyectos aparte; aquí solo entra el código que usa Godot. -->
+    <!-- core/, master/ y tests/ son proyectos aparte; aquí solo entra el código que usa Godot. -->
     <Compile Remove="core/**" />
     <Compile Remove="tests/**" />
+    <Compile Remove="master/**" />
     <ProjectReference Include="core/RoleDMFable.Core.csproj" />
+    <ProjectReference Include="master/RoleDMFable.Master.csproj" />
   </ItemGroup>
 </Project>

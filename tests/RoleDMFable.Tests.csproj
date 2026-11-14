@@ -12,6 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../core/RoleDMFable.Core.csproj" />
+    <ProjectReference Include="../master/RoleDMFable.Master.csproj" />
     <None Include="../data/scenes/*.json" Link="scenes/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
