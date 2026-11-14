@@ -44,6 +44,9 @@ public partial class Main : Control
     private Label _masterStatus = null!;
     private Label _masterTitle = null!;
     private Button _send = null!;
+    private PanelContainer _turnBar = null!;
+    private HBoxContainer _turnRow = null!;
+    private string? _lastTurnId;
 
     // Reglamentos: se leen una vez y se guardan troceados en este PC.
     private readonly RulesLibrary _rules = new();
@@ -278,6 +281,15 @@ public partial class Main : Control
         center.AddThemeConstantOverride("separation", 12);
         body.AddChild(center);
 
+        _turnBar = Ui.Panel(Ui.WoodDark, 12, 8, 3);
+        _turnBar.Visible = false;
+        var turnScroll = new ScrollContainer { VerticalScrollMode = ScrollContainer.ScrollMode.Disabled, CustomMinimumSize = new Vector2(0, 50) };
+        _turnRow = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        _turnRow.AddThemeConstantOverride("separation", 8);
+        turnScroll.AddChild(_turnRow);
+        _turnBar.AddChild(turnScroll);
+        center.AddChild(_turnBar);
+
         _map = new MapView { SizeFlagsVertical = SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(320, 240) };
         _map.TokenMoved += OnTokenMoved;
         _map.MoveRefused += (id, reason) => Say("Mesa", $"{_table.FindToken(id)?.Name ?? "La ficha"} no se mueve. {reason}");
@@ -418,7 +430,129 @@ public partial class Main : Control
             foreach (var token in others) _seats.AddChild(OtherRow(token));
         }
 
+        if (ActiveToken() is { } sheetOwner)
+        {
+            var sheet = Ui.Button($"Ficha de {sheetOwner.Name}", Ui.Parchment, 13);
+            sheet.CustomMinimumSize = new Vector2(0, 44);
+            sheet.TooltipText = "Ver y editar la hoja de personaje";
+            sheet.Pressed += () => OpenSheet(sheetOwner.Id);
+            _seats.AddChild(sheet);
+        }
+
         if (_chat is not null) _chat.PlaceholderText = $"Escribe lo que hace {ActiveName()}…";
+        RefreshTurnBar();
+    }
+
+    // ---------- Combate ----------
+
+    private void RefreshTurnBar()
+    {
+        foreach (var child in _turnRow.GetChildren())
+        {
+            _turnRow.RemoveChild(child);
+            child.QueueFree();
+        }
+        var combat = _table.Combat;
+        _turnBar.Visible = combat is not null;
+        if (combat is null)
+        {
+            _lastTurnId = null;
+            return;
+        }
+
+        var round = Ui.Text($"Ronda {combat.Round}", 18, Ui.Gold, title: true);
+        round.SizeFlagsVertical = SizeFlags.ShrinkCenter;
+        _turnRow.AddChild(round);
+        foreach (var combatant in combat.Order)
+        {
+            var token = _table.FindToken(combatant.Token);
+            if (token is null) continue;
+            var current = combatant.Token == combat.CurrentTokenId;
+            var chip = Ui.Panel(current ? Ui.Gold : Ui.Parchment, 10, 6, 2);
+            chip.SizeFlagsVertical = SizeFlags.ShrinkCenter;
+            chip.Modulate = token.Hp > 0 ? Colors.White : new Color(1, 1, 1, 0.45f);
+            chip.TooltipText = token.Hp > 0 ? $"Iniciativa {combatant.Initiative}" : "Fuera de combate";
+            var line = new HBoxContainer();
+            line.AddThemeConstantOverride("separation", 6);
+            line.AddChild(Dot(new Color(token.Color), 20));
+            line.AddChild(Ui.Text(token.Name, 14, weight: 800));
+            line.AddChild(Ui.Text(combatant.Initiative.ToString(), 13));
+            chip.AddChild(line);
+            _turnRow.AddChild(chip);
+        }
+        _turnRow.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
+        var pass = Ui.Button("Pasar turno", Ui.Parchment, 13);
+        pass.CustomMinimumSize = new Vector2(0, 40);
+        pass.SizeFlagsVertical = SizeFlags.ShrinkCenter;
+        pass.Disabled = _masterBusy;
+        pass.TooltipText = "Termina el turno actual";
+        pass.Pressed += PassTurn;
+        _turnRow.AddChild(pass);
+
+        // Cuando le toca a un héroe de este PC, su asiento pasa a ser el activo.
+        if (_lastTurnId != combat.CurrentTokenId)
+        {
+            _lastTurnId = combat.CurrentTokenId;
+            if (_table.TurnToken?.Seat is { } seat && seat != _activeSeat) Callable.From(() => SetActiveSeat(seat)).CallDeferred();
+        }
+    }
+
+    private void PassTurn()
+    {
+        if (_masterBusy || _table.Combat is null) return;
+        var round = _table.Combat.Round;
+        var next = _table.NextTurn();
+        if (next is null)
+        {
+            Say("Mesa", "No queda nadie en pie para actuar.");
+            return;
+        }
+        var newRound = _table.Combat.Round != round ? $"Empieza la ronda {_table.Combat.Round}. " : "";
+        Say("Mesa", $"{newRound}Le toca a {next.Name}.");
+        // Si le toca a una criatura del máster, se le avisa para que juegue su turno.
+        if (next.Kind != TokenKind.Hero && HasMaster)
+            _ = AskMaster("Mesa", $"Los jugadores han pasado el turno. Le toca a {next.Name}: resuelve los turnos de tus criaturas hasta que le toque a un héroe.");
+    }
+
+    // ---------- Hoja de personaje ----------
+
+    private void OpenSheet(string tokenId)
+    {
+        var token = _table.FindToken(tokenId);
+        if (token is null) return;
+        var dialog = new AcceptDialog { Title = $"Ficha de {token.Name}", OkButtonText = "Guardar", MinSize = new Vector2I(560, 0) };
+        dialog.AddCancelButton("Cancelar");
+        var column = new VBoxContainer();
+        column.AddThemeConstantOverride("separation", 10);
+        dialog.AddChild(column);
+        column.AddChild(DialogText(
+            "Un dato por línea, con el nombre, dos puntos y el valor. Por ejemplo «Fuerza: 16» o «Espada larga: +6, daño 1d8+3». "
+            + "Usa los nombres de tu reglamento. El máster lee esta ficha y también puede apuntar datos en ella.", 600));
+        var editor = new TextEdit
+        {
+            Text = string.Join("\n", token.Sheet.Select(e => $"{e.Name}: {e.Value}")),
+            PlaceholderText = "Fuerza: 16\nCA: 18\nEspada larga: +6, daño 1d8+3",
+            CustomMinimumSize = new Vector2(520, 320),
+        };
+        editor.AddThemeFontOverride("font", Ui.Body(600));
+        editor.AddThemeFontSizeOverride("font_size", 15);
+        column.AddChild(editor);
+
+        dialog.Confirmed += () =>
+        {
+            if (_table.FindToken(tokenId) is null) return;
+            var entries = editor.Text.Split('\n')
+                .Select(line => line.Split(':', 2))
+                .Where(parts => parts.Length == 2)
+                .Select(parts => new SheetEntry(parts[0], parts[1]));
+            _table.ReplaceSheet(tokenId, entries);
+        };
+        dialog.VisibilityChanged += () =>
+        {
+            if (!dialog.Visible) dialog.QueueFree();
+        };
+        AddChild(dialog);
+        dialog.PopupCentered();
     }
 
     private static Label SectionTitle(string text) => Ui.Text(text, 13, Ui.Light, weight: 800);
@@ -580,6 +714,7 @@ public partial class Main : Control
         _chat.Editable = !busy;
         _send.Disabled = busy;
         RefreshMasterStatus();
+        RefreshTurnBar();
         if (!busy && !_ephemeral) _chat.GrabFocus();
     }
 
@@ -844,6 +979,14 @@ public partial class Main : Control
             while (_masterBusy) await ToSignal(GetTree().CreateTimer(0.1), SceneTreeTimer.SignalName.Timeout);
         }
         if (settings) OpenSettings();
+        if (OS.GetCmdlineUserArgs().Contains("--combate"))
+        {
+            _table.SetSheetEntry("kael", "Fuerza", "16");
+            _table.SetSheetEntry("kael", "Espada larga", "+6, daño 1d8+3");
+            _table.StartCombat(new[] { new CombatantSpec("goblin_1", 17), new CombatantSpec("kael", 14), new CombatantSpec("mira", 9), new CombatantSpec("goblin_jefe", 6) });
+            _table.NextTurn();
+            if (OS.GetCmdlineUserArgs().Contains("--ficha")) OpenSheet("kael");
+        }
         if (travel)
         {
             // Lleva a Kael hasta la salida del este para ver el segundo lugar.

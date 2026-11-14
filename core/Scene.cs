@@ -29,6 +29,15 @@ public sealed record FeatureSpec(Terrain Type, int X, int Y, int W = 1, int H = 
 /// <summary>Casillas que llevan a otro lugar. El grupo aparece junto a (ToX, ToY) del destino.</summary>
 public sealed record ExitSpec(int X, int Y, string To, int ToX, int ToY, string Label = "", int W = 1, int H = 1);
 
+/// <summary>Una línea de la hoja de personaje: «Fuerza» → «16», «Espada larga» → «+6, 1d8+3».</summary>
+public sealed record SheetEntry(string Name, string Value);
+
+/// <summary>Un participante del combate con su iniciativa ya tirada.</summary>
+public sealed record CombatantSpec(string Token, int Initiative);
+
+/// <summary>Un combate en marcha: ronda, a quién le toca y el orden de turnos.</summary>
+public sealed record CombatSpec(int Round, int Turn, IReadOnlyList<CombatantSpec> Order);
+
 public sealed record TokenSpec(
     string Id,
     string Name,
@@ -40,7 +49,8 @@ public sealed record TokenSpec(
     string Color = "#888888",
     string Icon = "",
     string Role = "",
-    int? Seat = null);
+    int? Seat = null,
+    IReadOnlyList<SheetEntry>? Sheet = null);
 
 /// <summary>
 /// Un lugar descrito con datos, no con un dibujo. El máster describe la escena así
@@ -56,7 +66,8 @@ public sealed record SceneSpec(
     IReadOnlyList<FeatureSpec>? Features = null,
     IReadOnlyList<TokenSpec>? Tokens = null,
     IReadOnlyList<CellRect>? Unexplored = null,
-    IReadOnlyList<ExitSpec>? Exits = null)
+    IReadOnlyList<ExitSpec>? Exits = null,
+    CombatSpec? Combat = null)
 {
     public const int MaxSide = 200;
 
