@@ -52,7 +52,7 @@ public sealed class ClaudeMaster : IMaster
     {
         var messages = new List<MessageParam>
         {
-            new UserMessageParam { Content = MasterPrompt.BuildTurn(game, speaker, text) },
+            new UserMessageParam { Content = MasterPrompt.BuildTurn(game, speaker, text, tools.Rules) },
         };
         long input = 0, output = 0, cached = 0;
 

@@ -1,0 +1,5 @@
+Descanso
+
+Tras ocho horas de sueño cada héroe recupera todos sus puntos de vida.
+
+La niebla mágica impide ver más allá de una casilla.

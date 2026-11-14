@@ -2,6 +2,7 @@ using Godot;
 using System.Text.Json;
 using RoleDMFable.Core;
 using RoleDMFable.Master;
+using RoleDMFable.Rules;
 
 namespace RoleDMFable;
 
@@ -16,6 +17,7 @@ public partial class Main : Control
     private const string SavePath = "user://partida.json";
     private const double SaveDelaySeconds = 0.5;
     private const string SettingsPath = "user://ajustes.json";
+    private const string RulesFolder = "user://reglamentos";
 
     private Campaign _game = null!;
     private TableState _table => _game.Current;
@@ -43,6 +45,14 @@ public partial class Main : Control
     private Label _masterTitle = null!;
     private Button _send = null!;
 
+    // Reglamentos: se leen una vez y se guardan troceados en este PC.
+    private readonly RulesLibrary _rules = new();
+    private RulesStore? _rulesStore;
+    private VBoxContainer? _rulesList;
+    private Label? _rulesProgress;
+    private string? _importing;
+    private volatile int _importPercent;
+
     public override void _Ready()
     {
         var args = OS.GetCmdlineUserArgs();
@@ -61,19 +71,33 @@ public partial class Main : Control
             LoadSettings();
         }
 
+        var rulesProblems = new List<string>();
+        if (!_ephemeral)
+        {
+            _rulesStore = new RulesStore(ProjectSettings.GlobalizePath(RulesFolder));
+            rulesProblems.AddRange(_rulesStore.LoadInto(_rules));
+        }
+        _rules.Changed += RefreshRulesList;
+        GetWindow().FilesDropped += files => _ = ImportRules(files);
+
         string? notice = null;
         var loaded = _ephemeral ? null : TryLoadSave(out notice);
         BuildLayout();
         StartGame(loaded ?? NewCampaign(), isNew: loaded is null);
         if (notice is not null) Say("Mesa", notice);
+        foreach (var problem in rulesProblems) Say("Mesa", problem);
+        RefreshMasterStatus();
 
+        var sampleRules = args.FirstOrDefault(a => a.StartsWith("--reglas="))?["--reglas=".Length..];
         if (capture is not null)
-            _ = CaptureAndQuit(capture["--captura=".Length..], args.Contains("--arrastrar"), args.Contains("--viajar"),
+            _ = CaptureAndQuit(sampleRules, capture["--captura=".Length..], args.Contains("--arrastrar"), args.Contains("--viajar"),
                 args.Contains("--ajustes"), args.FirstOrDefault(a => a.StartsWith("--decir="))?["--decir=".Length..]);
     }
 
     public override void _Process(double delta)
     {
+        if (_importing is not null && _rulesProgress is not null && IsInstanceValid(_rulesProgress))
+            _rulesProgress.Text = $"Leyendo «{_importing}»… {_importPercent} %";
         if (_saveCountdown < 0) return;
         _saveCountdown -= delta;
         if (_saveCountdown < 0) SaveNow();
@@ -118,7 +142,7 @@ public partial class Main : Control
         _masterTurn?.Cancel();
         _game = game;
         _game.Changed += OnGameChanged;
-        _tools = new MasterToolbox(_game, new SystemRandomSource());
+        _tools = new MasterToolbox(_game, new SystemRandomSource(), _rules);
         _tools.Announced += Say;
         _tools.Travelled += OnTravelled;
         _activeSeat = _game.Scenes.SelectMany(s => s.Tokens).Where(t => t.Seat is not null).Select(t => t.Seat!.Value).DefaultIfEmpty(1).Min();
@@ -288,6 +312,11 @@ public partial class Main : Control
         row.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
         _masterStatus = Ui.Text("", 14, Ui.Parchment);
         row.AddChild(_masterStatus);
+        var rules = Ui.Button("Reglamentos", Ui.Parchment, 13);
+        rules.CustomMinimumSize = new Vector2(0, 44);
+        rules.TooltipText = "Cargar reglas desde PDF, Word o TXT";
+        rules.Pressed += OpenRules;
+        row.AddChild(rules);
         var master = Ui.Button("Máster IA", Ui.Gold, 13);
         master.CustomMinimumSize = new Vector2(0, 44);
         master.TooltipText = "Clave y modelo del máster";
@@ -556,13 +585,19 @@ public partial class Main : Control
 
     private void RefreshMasterStatus()
     {
+        var books = _rules.Books.Count switch
+        {
+            0 => "sin reglamentos",
+            1 => "1 reglamento",
+            var count => $"{count} reglamentos",
+        };
         if (!HasMaster)
         {
-            _masterStatus.Text = "Se guarda sola · máster sin conectar";
+            _masterStatus.Text = $"Máster sin conectar · {books}";
             return;
         }
-        var cost = _sessionCost > 0 ? $" · gasto aprox. de esta sesión {_sessionCost:0.00} $" : "";
-        _masterStatus.Text = $"Se guarda sola · máster: {CurrentModel.Name}{cost}";
+        var cost = _sessionCost > 0 ? $" · gasto aprox. {_sessionCost:0.00} $" : "";
+        _masterStatus.Text = $"Máster: {CurrentModel.Name}{cost} · {books}";
     }
 
     private void LoadSettings()
@@ -639,6 +674,137 @@ public partial class Main : Control
         dialog.PopupCentered();
     }
 
+    // ---------- Reglamentos ----------
+
+    private void OpenRules()
+    {
+        var dialog = new AcceptDialog { Title = "Reglamentos", OkButtonText = "Cerrar", MinSize = new Vector2I(600, 0) };
+        var column = new VBoxContainer();
+        column.AddThemeConstantOverride("separation", 10);
+        dialog.AddChild(column);
+
+        column.AddChild(DialogText(
+            "Añade aquí los manuales de tu juego en PDF, Word (.docx) o TXT. El juego los lee una vez, los guarda en este PC "
+            + "y el máster los consulta cuando necesita una regla. También puedes arrastrar los archivos a la ventana.", 600));
+
+        _rulesList = new VBoxContainer();
+        _rulesList.AddThemeConstantOverride("separation", 6);
+        column.AddChild(_rulesList);
+        RefreshRulesList();
+
+        _rulesProgress = DialogText("", 800);
+        column.AddChild(_rulesProgress);
+
+        var add = new Button { Text = "Añadir archivo…", CustomMinimumSize = new Vector2(0, 44) };
+        add.AddThemeFontOverride("font", Ui.Body(800));
+        add.Pressed += PickRuleFiles;
+        column.AddChild(add);
+
+        dialog.VisibilityChanged += () =>
+        {
+            if (dialog.Visible) return;
+            _rulesList = null;
+            _rulesProgress = null;
+            dialog.QueueFree();
+        };
+        AddChild(dialog);
+        dialog.PopupCentered();
+    }
+
+    private void RefreshRulesList()
+    {
+        RefreshMasterStatus();
+        if (_rulesList is null || !IsInstanceValid(_rulesList)) return;
+        foreach (var child in _rulesList.GetChildren())
+        {
+            _rulesList.RemoveChild(child);
+            child.QueueFree();
+        }
+        if (_rules.Books.Count == 0)
+        {
+            _rulesList.AddChild(DialogText("Todavía no hay ningún reglamento. El máster usa una regla sencilla de 1d20 contra dificultad.", 700));
+            return;
+        }
+        foreach (var book in _rules.Books)
+        {
+            var row = new HBoxContainer();
+            row.AddThemeConstantOverride("separation", 10);
+            var pages = book.HasPages ? "con números de página" : "sin números de página";
+            var label = DialogText($"{book.Title}\n{book.FileName} · {book.Passages.Count} pasajes · {pages}", 700);
+            label.CustomMinimumSize = new Vector2(400, 0);
+            label.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            row.AddChild(label);
+            var remove = new Button { Text = "Quitar", SizeFlagsVertical = SizeFlags.ShrinkCenter, CustomMinimumSize = new Vector2(0, 40) };
+            remove.AddThemeFontOverride("font", Ui.Body(700));
+            var id = book.Id;
+            var title = book.Title;
+            remove.Pressed += () =>
+            {
+                _rulesStore?.Delete(id);
+                _rules.Remove(id);
+                Say("Mesa", $"Reglamento «{title}» quitado.");
+            };
+            row.AddChild(remove);
+            _rulesList.AddChild(row);
+        }
+    }
+
+    private void PickRuleFiles()
+    {
+        var picker = new FileDialog
+        {
+            Title = "Elige uno o varios reglamentos",
+            Access = FileDialog.AccessEnum.Filesystem,
+            FileMode = FileDialog.FileModeEnum.OpenFiles,
+            UseNativeDialog = true,
+            Filters = new[] { "*.pdf, *.docx, *.txt, *.md ; Reglamentos (PDF, Word, texto)" },
+        };
+        picker.FilesSelected += files => _ = ImportRules(files);
+        picker.VisibilityChanged += () =>
+        {
+            if (!picker.Visible) picker.QueueFree();
+        };
+        AddChild(picker);
+        picker.PopupCentered(new Vector2I(900, 600));
+    }
+
+    private async Task ImportRules(string[] files)
+    {
+        if (_importing is not null)
+        {
+            Say("Mesa", "Espera a que termine de leerse el reglamento anterior.");
+            return;
+        }
+        foreach (var file in files)
+        {
+            var name = Path.GetFileName(file);
+            _importPercent = 0;
+            _importing = name;
+            try
+            {
+                // Leer un manual grande tarda unos segundos: se hace aparte para no congelar la mesa.
+                var book = await Task.Run(() => RuleFiles.Import(file, progress => _importPercent = (int)(progress * 100)));
+                _rulesStore?.Save(book);
+                _rules.Add(book);
+                var pages = book.HasPages ? "" : " Este formato no tiene números de página, así que el máster citará solo el libro.";
+                Say("Mesa", $"Reglamento «{book.Title}» cargado: {book.Passages.Count} pasajes.{pages}");
+            }
+            catch (FormatException e)
+            {
+                Say("Mesa", $"«{name}» no se ha cargado. {e.Message}");
+            }
+            catch (IOException e)
+            {
+                Say("Mesa", $"«{name}» no se ha podido guardar: {e.Message}");
+            }
+            finally
+            {
+                _importing = null;
+            }
+        }
+        if (_rulesProgress is not null && IsInstanceValid(_rulesProgress)) _rulesProgress.Text = "";
+    }
+
     private static Label DialogText(string text, int weight)
     {
         var label = new Label { Text = text, AutowrapMode = TextServer.AutowrapMode.WordSmart, CustomMinimumSize = new Vector2(520, 0) };
@@ -664,8 +830,13 @@ public partial class Main : Control
 
     // ---------- Captura para revisar el aspecto sin abrir el editor ----------
 
-    private async Task CaptureAndQuit(string path, bool drag, bool travel, bool settings, string? say)
+    private async Task CaptureAndQuit(string? rules, string path, bool drag, bool travel, bool settings, string? say)
     {
+        if (rules is not null)
+        {
+            await ImportRules(rules.Split(';'));
+            OpenRules();
+        }
         if (say is not null)
         {
             _chat.Text = say;
