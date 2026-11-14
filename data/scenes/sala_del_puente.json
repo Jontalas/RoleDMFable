@@ -1,0 +1,144 @@
+{
+  "id": "sala_del_puente",
+  "name": "Sala del puente",
+  "width": 13,
+  "height": 9,
+  "cellFeet": 5,
+  "base": "floor",
+  "features": [
+    {
+      "type": "wall",
+      "x": 0,
+      "y": 0,
+      "w": 13,
+      "h": 1
+    },
+    {
+      "type": "wall",
+      "x": 0,
+      "y": 8,
+      "w": 13,
+      "h": 1
+    },
+    {
+      "type": "water",
+      "x": 6,
+      "y": 1,
+      "w": 2,
+      "h": 7
+    },
+    {
+      "type": "bridge",
+      "x": 6,
+      "y": 4,
+      "w": 2,
+      "h": 1
+    },
+    {
+      "type": "rock",
+      "x": 1,
+      "y": 6
+    },
+    {
+      "type": "rock",
+      "x": 4,
+      "y": 1
+    },
+    {
+      "type": "rock",
+      "x": 10,
+      "y": 6
+    }
+  ],
+  "unexplored": [
+    {
+      "x": 11,
+      "y": 0,
+      "w": 2,
+      "h": 9
+    }
+  ],
+  "tokens": [
+    {
+      "id": "kael",
+      "name": "Kael",
+      "kind": "hero",
+      "role": "Guerrero 3",
+      "icon": "sword",
+      "color": "#3f6fb5",
+      "x": 4,
+      "y": 5,
+      "hp": 28,
+      "maxHp": 31,
+      "seat": 1
+    },
+    {
+      "id": "mira",
+      "name": "Mira",
+      "kind": "hero",
+      "role": "Maga 3",
+      "icon": "hat",
+      "color": "#7a4fa3",
+      "x": 2,
+      "y": 3,
+      "hp": 14,
+      "maxHp": 16,
+      "seat": 2
+    },
+    {
+      "id": "bruna",
+      "name": "Bruna",
+      "kind": "hero",
+      "role": "Clériga 3",
+      "icon": "sun",
+      "color": "#1f7268",
+      "x": 2,
+      "y": 5,
+      "hp": 24,
+      "maxHp": 24
+    },
+    {
+      "id": "goblin_1",
+      "name": "Goblin",
+      "kind": "enemy",
+      "icon": "goblin",
+      "color": "#6fb048",
+      "x": 8,
+      "y": 4,
+      "hp": 3,
+      "maxHp": 6
+    },
+    {
+      "id": "goblin_2",
+      "name": "Arquero goblin",
+      "kind": "enemy",
+      "icon": "goblin",
+      "color": "#6fb048",
+      "x": 9,
+      "y": 2,
+      "hp": 6,
+      "maxHp": 6
+    },
+    {
+      "id": "goblin_jefe",
+      "name": "Jefe goblin",
+      "kind": "enemy",
+      "icon": "goblin_boss",
+      "color": "#6fb048",
+      "x": 9,
+      "y": 6,
+      "hp": 13,
+      "maxHp": 13
+    }
+  ],
+  "exits": [
+    {
+      "x": 12,
+      "y": 4,
+      "to": "galeria_de_las_setas",
+      "toX": 0,
+      "toY": 4,
+      "label": "Túnel al este"
+    }
+  ]
+}

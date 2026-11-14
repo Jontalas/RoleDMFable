@@ -1,0 +1,120 @@
+{
+  "id": "galeria_de_las_setas",
+  "name": "Galería de las setas",
+  "width": 15,
+  "height": 9,
+  "cellFeet": 5,
+  "base": "floor",
+  "features": [
+    {
+      "type": "wall",
+      "x": 0,
+      "y": 0,
+      "w": 15,
+      "h": 2
+    },
+    {
+      "type": "wall",
+      "x": 0,
+      "y": 7,
+      "w": 15,
+      "h": 2
+    },
+    {
+      "type": "floor",
+      "x": 6,
+      "y": 1,
+      "w": 7,
+      "h": 1
+    },
+    {
+      "type": "floor",
+      "x": 8,
+      "y": 7,
+      "w": 5,
+      "h": 1
+    },
+    {
+      "type": "water",
+      "x": 9,
+      "y": 1,
+      "w": 3,
+      "h": 2
+    },
+    {
+      "type": "rock",
+      "x": 4,
+      "y": 2
+    },
+    {
+      "type": "rock",
+      "x": 6,
+      "y": 6
+    },
+    {
+      "type": "rock",
+      "x": 13,
+      "y": 3
+    },
+    {
+      "type": "wall",
+      "x": 14,
+      "y": 2,
+      "w": 1,
+      "h": 5
+    }
+  ],
+  "unexplored": [
+    {
+      "x": 5,
+      "y": 0,
+      "w": 10,
+      "h": 9
+    }
+  ],
+  "exits": [
+    {
+      "x": 0,
+      "y": 4,
+      "to": "sala_del_puente",
+      "toX": 12,
+      "toY": 4,
+      "label": "Túnel al oeste"
+    }
+  ],
+  "tokens": [
+    {
+      "id": "seta_1",
+      "name": "Seta chillona",
+      "kind": "enemy",
+      "icon": "mushroom",
+      "color": "#c2557a",
+      "x": 8,
+      "y": 3,
+      "hp": 11,
+      "maxHp": 11
+    },
+    {
+      "id": "seta_2",
+      "name": "Seta chillona",
+      "kind": "enemy",
+      "icon": "mushroom",
+      "color": "#c2557a",
+      "x": 11,
+      "y": 5,
+      "hp": 11,
+      "maxHp": 11
+    },
+    {
+      "id": "minero",
+      "name": "Viejo minero",
+      "kind": "npc",
+      "icon": "hat",
+      "color": "#a8763a",
+      "x": 12,
+      "y": 7,
+      "hp": 7,
+      "maxHp": 7
+    }
+  ]
+}
