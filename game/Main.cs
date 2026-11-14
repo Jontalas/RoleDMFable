@@ -1,5 +1,7 @@
 using Godot;
+using System.Text.Json;
 using RoleDMFable.Core;
+using RoleDMFable.Master;
 
 namespace RoleDMFable;
 
@@ -13,6 +15,7 @@ public partial class Main : Control
     private const string StartScene = "sala_del_puente";
     private const string SavePath = "user://partida.json";
     private const double SaveDelaySeconds = 0.5;
+    private const string SettingsPath = "user://ajustes.json";
 
     private Campaign _game = null!;
     private TableState _table => _game.Current;
@@ -27,12 +30,36 @@ public partial class Main : Control
     private LineEdit _chat = null!;
     private int _activeSeat = 1;
 
+    // El máster IA: la clave y el modelo se guardan solo en este PC, fuera de la partida.
+    private string _apiKey = "";
+    private string _modelId = ClaudeMaster.DefaultModel;
+    private string? _apiUrl;
+    private MasterToolbox _tools = null!;
+    private CancellationTokenSource? _masterTurn;
+    private bool _masterBusy;
+    private bool _noKeyHintShown;
+    private double _sessionCost;
+    private Label _masterStatus = null!;
+    private Label _masterTitle = null!;
+    private Button _send = null!;
+
     public override void _Ready()
     {
         var args = OS.GetCmdlineUserArgs();
         var capture = args.FirstOrDefault(a => a.StartsWith("--captura="));
         // Las capturas de revisión no leen ni pisan la partida guardada del jugador.
         _ephemeral = capture is not null;
+
+        if (_ephemeral)
+        {
+            // Solo en capturas de revisión: permite apuntar a un servidor de imitación.
+            _apiUrl = args.FirstOrDefault(a => a.StartsWith("--api="))?["--api=".Length..];
+            if (_apiUrl is not null) _apiKey = "clave-de-prueba";
+        }
+        else
+        {
+            LoadSettings();
+        }
 
         string? notice = null;
         var loaded = _ephemeral ? null : TryLoadSave(out notice);
@@ -41,7 +68,8 @@ public partial class Main : Control
         if (notice is not null) Say("Mesa", notice);
 
         if (capture is not null)
-            _ = CaptureAndQuit(capture["--captura=".Length..], args.Contains("--arrastrar"), args.Contains("--viajar"));
+            _ = CaptureAndQuit(capture["--captura=".Length..], args.Contains("--arrastrar"), args.Contains("--viajar"),
+                args.Contains("--ajustes"), args.FirstOrDefault(a => a.StartsWith("--decir="))?["--decir=".Length..]);
     }
 
     public override void _Process(double delta)
@@ -87,8 +115,12 @@ public partial class Main : Control
     private void StartGame(Campaign game, bool isNew)
     {
         if (_game is not null) _game.Changed -= OnGameChanged;
+        _masterTurn?.Cancel();
         _game = game;
         _game.Changed += OnGameChanged;
+        _tools = new MasterToolbox(_game, new SystemRandomSource());
+        _tools.Announced += Say;
+        _tools.Travelled += OnTravelled;
         _activeSeat = _game.Scenes.SelectMany(s => s.Tokens).Where(t => t.Seat is not null).Select(t => t.Seat!.Value).DefaultIfEmpty(1).Min();
 
         _log.Clear();
@@ -98,7 +130,9 @@ public partial class Main : Control
         if (isNew)
         {
             Say("Mesa", $"Empieza la partida en {_table.SceneName}. Arrastra una figurita para moverla; si un héroe pisa una salida dorada, el grupo pasa al siguiente lugar.");
-            Say("Mesa", "La partida se guarda sola. El máster todavía no está conectado: llegará en la fase 1.");
+            Say("Mesa", HasMaster
+                ? "La partida se guarda sola. Escribe abajo lo que hace tu personaje y el máster te responderá."
+                : "La partida se guarda sola. Para que el máster responda, pulsa «Máster IA» arriba y pon tu clave.");
         }
         else
         {
@@ -149,14 +183,19 @@ public partial class Main : Control
         var travel = _game.TryTravel(id);
         if (travel is not null)
         {
-            ShowCurrentScene();
-            var way = travel.Label.Length > 0 ? $" por «{travel.Label}»" : "";
-            Say("Mesa", $"El grupo sale de {travel.FromScene}{way} y llega a {travel.ToScene}.");
+            OnTravelled(travel);
         }
         else if (_table.FindToken(id) is { Kind: TokenKind.Hero } hero && _table.ExitAt(hero.X, hero.Y) is not null)
         {
             Say("Mesa", "El grupo no cabe al otro lado de esa salida.");
         }
+    }
+
+    private void OnTravelled(TravelResult travel)
+    {
+        ShowCurrentScene();
+        var way = travel.Label.Length > 0 ? $" por «{travel.Label}»" : "";
+        Say("Mesa", $"El grupo sale de {travel.FromScene}{way} y llega a {travel.ToScene}.");
     }
 
     private void AskNewGame()
@@ -247,7 +286,14 @@ public partial class Main : Control
         _sceneLabel = Ui.Text("", 15, Ui.Parchment);
         row.AddChild(_sceneLabel);
         row.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
-        row.AddChild(Ui.Text("Se guarda sola · un solo PC, sin máster todavía", 14, Ui.Parchment));
+        _masterStatus = Ui.Text("", 14, Ui.Parchment);
+        row.AddChild(_masterStatus);
+        var master = Ui.Button("Máster IA", Ui.Gold, 13);
+        master.CustomMinimumSize = new Vector2(0, 44);
+        master.TooltipText = "Clave y modelo del máster";
+        master.Pressed += OpenSettings;
+        row.AddChild(master);
+        RefreshMasterStatus();
         var fresh = Ui.Button("Nueva partida", Ui.Parchment, 13);
         fresh.CustomMinimumSize = new Vector2(0, 44);
         fresh.Pressed += AskNewGame;
@@ -271,7 +317,8 @@ public partial class Main : Control
         headerStyle.CornerRadiusTopLeft = 10;
         headerStyle.CornerRadiusTopRight = 10;
         header.AddThemeStyleboxOverride("panel", headerStyle);
-        header.AddChild(Ui.Text("El máster", 20, Ui.Parchment, title: true));
+        _masterTitle = Ui.Text("El máster", 20, Ui.Parchment, title: true);
+        header.AddChild(_masterTitle);
         column.AddChild(header);
 
         var logMargin = new MarginContainer { SizeFlagsVertical = SizeFlags.ExpandFill };
@@ -304,9 +351,9 @@ public partial class Main : Control
         _chat.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         _chat.TextSubmitted += _ => SendChat();
         inputRow.AddChild(_chat);
-        var send = Ui.Button("Enviar", Ui.Gold);
-        send.Pressed += SendChat;
-        inputRow.AddChild(send);
+        _send = Ui.Button("Enviar", Ui.Gold);
+        _send.Pressed += SendChat;
+        inputRow.AddChild(_send);
         return panel;
     }
 
@@ -438,9 +485,166 @@ public partial class Main : Control
     private void SendChat()
     {
         var text = _chat.Text.Trim();
-        if (text.Length == 0) return;
+        if (text.Length == 0 || _masterBusy) return;
         _chat.Clear();
-        Say(ActiveName(), text);
+        var speaker = ActiveName();
+        Say(speaker, text);
+
+        if (!HasMaster)
+        {
+            if (!_noKeyHintShown) Say("Mesa", "El máster no está conectado, así que nadie responde. Pulsa «Máster IA» arriba para poner tu clave.");
+            _noKeyHintShown = true;
+            return;
+        }
+        _ = AskMaster(speaker, text);
+    }
+
+    // ---------- Máster IA ----------
+
+    private bool HasMaster => _apiKey.Length > 0;
+
+    private MasterModel CurrentModel => ClaudeMaster.Models.FirstOrDefault(m => m.Id == _modelId) ?? ClaudeMaster.Models[0];
+
+    private async Task AskMaster(string speaker, string text)
+    {
+        var game = _game;
+        var turn = new CancellationTokenSource();
+        _masterTurn = turn;
+        SetMasterBusy(true);
+        try
+        {
+            var master = new ClaudeMaster(_apiKey, CurrentModel.Id, _apiUrl);
+            // Tras cada espera se vuelve al hilo principal de Godot, así que las herramientas
+            // cambian la mesa en el mismo hilo que la dibuja.
+            var usage = await master.PlayTurnAsync(game, _tools, speaker, text,
+                narration => { if (game == _game) Say(MasterToolbox.MasterName, narration); }, turn.Token);
+            _sessionCost += CurrentModel.Cost(usage);
+        }
+        catch (MasterException e)
+        {
+            if (game == _game) Say("Mesa", e.Message);
+        }
+        catch (OperationCanceledException)
+        {
+            // Se empezó otra partida mientras el máster pensaba: su respuesta ya no hace falta.
+        }
+        catch (Exception e)
+        {
+            GD.PushError(e.ToString());
+            if (game == _game) Say("Mesa", $"El máster ha tenido un problema inesperado: {e.Message}");
+        }
+        finally
+        {
+            if (_masterTurn == turn)
+            {
+                _masterTurn = null;
+                SetMasterBusy(false);
+            }
+            turn.Dispose();
+        }
+    }
+
+    private void SetMasterBusy(bool busy)
+    {
+        _masterBusy = busy;
+        _masterTitle.Text = busy ? "El máster está pensando…" : "El máster";
+        _chat.Editable = !busy;
+        _send.Disabled = busy;
+        RefreshMasterStatus();
+        if (!busy && !_ephemeral) _chat.GrabFocus();
+    }
+
+    private void RefreshMasterStatus()
+    {
+        if (!HasMaster)
+        {
+            _masterStatus.Text = "Se guarda sola · máster sin conectar";
+            return;
+        }
+        var cost = _sessionCost > 0 ? $" · gasto aprox. de esta sesión {_sessionCost:0.00} $" : "";
+        _masterStatus.Text = $"Se guarda sola · máster: {CurrentModel.Name}{cost}";
+    }
+
+    private void LoadSettings()
+    {
+        if (!Godot.FileAccess.FileExists(SettingsPath)) return;
+        try
+        {
+            using var settings = JsonDocument.Parse(Godot.FileAccess.GetFileAsString(SettingsPath));
+            if (settings.RootElement.TryGetProperty("claveApi", out var key)) _apiKey = key.GetString() ?? "";
+            if (settings.RootElement.TryGetProperty("modelo", out var model) && ClaudeMaster.Models.Any(m => m.Id == model.GetString()))
+                _modelId = model.GetString()!;
+        }
+        catch (Exception e) when (e is JsonException or InvalidOperationException)
+        {
+            GD.PushWarning($"No se pudieron leer los ajustes: {e.Message}");
+        }
+    }
+
+    private void SaveSettings()
+    {
+        using var file = Godot.FileAccess.Open(SettingsPath, Godot.FileAccess.ModeFlags.Write);
+        if (file is null)
+        {
+            Say("Mesa", $"No se pudieron guardar los ajustes: {Godot.FileAccess.GetOpenError()}");
+            return;
+        }
+        file.StoreString(JsonSerializer.Serialize(new Dictionary<string, string> { ["claveApi"] = _apiKey, ["modelo"] = _modelId }));
+    }
+
+    private void OpenSettings()
+    {
+        var dialog = new AcceptDialog { Title = "Máster IA", OkButtonText = "Guardar", MinSize = new Vector2I(560, 0) };
+        dialog.AddCancelButton("Cancelar");
+
+        var column = new VBoxContainer();
+        column.AddThemeConstantOverride("separation", 10);
+        dialog.AddChild(column);
+
+        column.AddChild(DialogText("Clave de API de Claude", 800));
+        var key = Ui.Input("sk-ant-…");
+        key.Secret = true;
+        key.Text = _apiKey;
+        column.AddChild(key);
+        column.AddChild(DialogText(
+            "Se crea en platform.claude.com, en «Claves de API». Se guarda solo en este PC y solo se envía a Claude. "
+            + "Cada respuesta del máster gasta un poco del saldo de esa cuenta.", 600));
+
+        column.AddChild(DialogText("Modelo", 800));
+        var model = new OptionButton { CustomMinimumSize = new Vector2(0, 44) };
+        model.AddThemeFontOverride("font", Ui.Body(700));
+        foreach (var option in ClaudeMaster.Models)
+        {
+            model.AddItem($"{option.Name}: {option.Note}");
+            if (option.Id == _modelId) model.Selected = model.ItemCount - 1;
+        }
+        column.AddChild(model);
+
+        dialog.Confirmed += () =>
+        {
+            _apiKey = key.Text.Trim();
+            _modelId = ClaudeMaster.Models[Math.Max(0, model.Selected)].Id;
+            _noKeyHintShown = false;
+            if (!_ephemeral) SaveSettings();
+            RefreshMasterStatus();
+            Say("Mesa", HasMaster
+                ? $"Máster conectado con {CurrentModel.Name}. Escribe lo que hace tu personaje."
+                : "Máster desconectado: no hay clave.");
+        };
+        dialog.VisibilityChanged += () =>
+        {
+            if (!dialog.Visible) dialog.QueueFree();
+        };
+        AddChild(dialog);
+        dialog.PopupCentered();
+    }
+
+    private static Label DialogText(string text, int weight)
+    {
+        var label = new Label { Text = text, AutowrapMode = TextServer.AutowrapMode.WordSmart, CustomMinimumSize = new Vector2(520, 0) };
+        label.AddThemeFontOverride("font", Ui.Body(weight));
+        label.AddThemeFontSizeOverride("font_size", 15);
+        return label;
     }
 
     private void Say(string who, string text)
@@ -460,8 +664,15 @@ public partial class Main : Control
 
     // ---------- Captura para revisar el aspecto sin abrir el editor ----------
 
-    private async Task CaptureAndQuit(string path, bool drag, bool travel)
+    private async Task CaptureAndQuit(string path, bool drag, bool travel, bool settings, string? say)
     {
+        if (say is not null)
+        {
+            _chat.Text = say;
+            SendChat();
+            while (_masterBusy) await ToSignal(GetTree().CreateTimer(0.1), SceneTreeTimer.SignalName.Timeout);
+        }
+        if (settings) OpenSettings();
         if (travel)
         {
             // Lleva a Kael hasta la salida del este para ver el segundo lugar.
