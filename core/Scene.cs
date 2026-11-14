@@ -26,6 +26,9 @@ public sealed record CellRect(int X, int Y, int W = 1, int H = 1);
 
 public sealed record FeatureSpec(Terrain Type, int X, int Y, int W = 1, int H = 1);
 
+/// <summary>Casillas que llevan a otro lugar. El grupo aparece junto a (ToX, ToY) del destino.</summary>
+public sealed record ExitSpec(int X, int Y, string To, int ToX, int ToY, string Label = "", int W = 1, int H = 1);
+
 public sealed record TokenSpec(
     string Id,
     string Name,
@@ -52,7 +55,8 @@ public sealed record SceneSpec(
     Terrain Base = Terrain.Floor,
     IReadOnlyList<FeatureSpec>? Features = null,
     IReadOnlyList<TokenSpec>? Tokens = null,
-    IReadOnlyList<CellRect>? Unexplored = null)
+    IReadOnlyList<CellRect>? Unexplored = null,
+    IReadOnlyList<ExitSpec>? Exits = null)
 {
     public const int MaxSide = 200;
 
@@ -80,6 +84,13 @@ public sealed record SceneSpec(
         if (Width < 1 || Height < 1 || Width > MaxSide || Height > MaxSide)
             throw new FormatException($"El tamaño del mapa debe estar entre 1 y {MaxSide} casillas por lado.");
         if (CellFeet < 1) throw new FormatException("Cada casilla debe medir al menos 1 pie.");
+
+        foreach (var exit in Exits ?? Array.Empty<ExitSpec>())
+        {
+            if (string.IsNullOrWhiteSpace(exit.To)) throw new FormatException("Hay una salida sin destino.");
+            if (exit.W < 1 || exit.H < 1 || exit.X < 0 || exit.Y < 0 || exit.X + exit.W > Width || exit.Y + exit.H > Height)
+                throw new FormatException($"La salida hacia «{exit.To}» está fuera del mapa.");
+        }
 
         var ids = new HashSet<string>(StringComparer.Ordinal);
         foreach (var token in Tokens ?? Array.Empty<TokenSpec>())

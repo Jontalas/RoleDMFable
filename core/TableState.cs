@@ -57,6 +57,10 @@ public sealed class TableState
     public int Height { get; }
     public int CellFeet { get; }
     public IReadOnlyList<Token> Tokens => _order;
+    public IReadOnlyList<ExitSpec> Exits { get; }
+
+    /// <summary>Casillas a la redonda que un héroe deja exploradas al pasar.</summary>
+    public const int SightCells = 4;
 
     /// <summary>Se dispara tras cada cambio aplicado, para que la interfaz se redibuje.</summary>
     public event Action? Changed;
@@ -69,6 +73,7 @@ public sealed class TableState
         Width = spec.Width;
         Height = spec.Height;
         CellFeet = spec.CellFeet;
+        Exits = (spec.Exits ?? Array.Empty<ExitSpec>()).ToArray();
         _terrain = new Terrain[Width, Height];
         _unexplored = new bool[Width, Height];
 
@@ -93,6 +98,106 @@ public sealed class TableState
             _tokens.Add(token.Id, token);
             _order.Add(token);
         }
+
+        foreach (var hero in _order.Where(t => t.Kind == TokenKind.Hero))
+            RevealAround(hero.X, hero.Y, notify: false);
+    }
+
+    /// <summary>La mesa tal como está ahora, lista para guardarse y volver a cargarse.</summary>
+    public SceneSpec ToSpec()
+    {
+        var features = new List<FeatureSpec>();
+        var unexplored = new List<CellRect>();
+        for (var y = 0; y < Height; y++)
+        {
+            // Tramos horizontales de casillas iguales, para que el archivo no crezca casilla a casilla.
+            for (var x = 0; x < Width;)
+            {
+                var terrain = _terrain[x, y];
+                var end = x;
+                while (end + 1 < Width && _terrain[end + 1, y] == terrain) end++;
+                if (terrain != Terrain.Floor) features.Add(new FeatureSpec(terrain, x, y, end - x + 1));
+                x = end + 1;
+            }
+            for (var x = 0; x < Width;)
+            {
+                if (!_unexplored[x, y])
+                {
+                    x++;
+                    continue;
+                }
+                var end = x;
+                while (end + 1 < Width && _unexplored[end + 1, y]) end++;
+                unexplored.Add(new CellRect(x, y, end - x + 1));
+                x = end + 1;
+            }
+        }
+        var tokens = _order.Select(t => new TokenSpec(t.Id, t.Name, t.Kind, t.X, t.Y, t.Hp, t.MaxHp, t.Color, t.Icon, t.Role, t.Seat)).ToList();
+        return new SceneSpec(SceneId, SceneName, Width, Height, CellFeet, Terrain.Floor, features, tokens, unexplored, Exits);
+    }
+
+    public ExitSpec? ExitAt(int x, int y) =>
+        Exits.FirstOrDefault(e => x >= e.X && y >= e.Y && x < e.X + e.W && y < e.Y + e.H);
+
+    /// <summary>
+    /// Las casillas libres y pisables más cercanas a un punto, hasta <paramref name="count"/>.
+    /// Sirve para colocar al grupo cuando llega a un lugar.
+    /// </summary>
+    public IReadOnlyList<(int X, int Y)> FreeCellsNear(int x, int y, int count)
+    {
+        var found = new List<(int, int)>();
+        if (!InBounds(x, y) || count <= 0) return found;
+        var seen = new bool[Width, Height];
+        var queue = new Queue<(int X, int Y)>();
+        queue.Enqueue((x, y));
+        seen[x, y] = true;
+        while (queue.Count > 0 && found.Count < count)
+        {
+            var cell = queue.Dequeue();
+            var walkable = IsWalkable(_terrain[cell.X, cell.Y]);
+            if (walkable && TokenAt(cell.X, cell.Y) is null) found.Add(cell);
+            // Se parte de la casilla pedida aunque no sea pisable, pero no se atraviesan paredes ni agua.
+            if (!walkable && cell != (x, y)) continue;
+            foreach (var (dx, dy) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
+            {
+                var (nx, ny) = (cell.X + dx, cell.Y + dy);
+                if (!InBounds(nx, ny) || seen[nx, ny]) continue;
+                seen[nx, ny] = true;
+                queue.Enqueue((nx, ny));
+            }
+        }
+        return found;
+    }
+
+    internal Token RemoveToken(string id)
+    {
+        var token = _tokens[id];
+        _tokens.Remove(id);
+        _order.Remove(token);
+        return token;
+    }
+
+    internal void AddToken(Token token, int x, int y)
+    {
+        token.X = x;
+        token.Y = y;
+        _tokens.Add(token.Id, token);
+        _order.Add(token);
+        if (token.Kind == TokenKind.Hero) RevealAround(x, y, notify: false);
+    }
+
+    internal void NotifyChanged() => Changed?.Invoke();
+
+    private bool RevealAround(int cx, int cy, bool notify)
+    {
+        var changed = false;
+        Fill(cx - SightCells, cy - SightCells, SightCells * 2 + 1, SightCells * 2 + 1, (x, y) =>
+        {
+            changed |= _unexplored[x, y];
+            _unexplored[x, y] = false;
+        });
+        if (changed && notify) Changed?.Invoke();
+        return changed;
     }
 
     private void Fill(int x0, int y0, int w, int h, Action<int, int> set)
@@ -135,6 +240,7 @@ public sealed class TableState
         if (token.X == x && token.Y == y) return result;
         token.X = x;
         token.Y = y;
+        if (token.Kind == TokenKind.Hero) RevealAround(x, y, notify: false);
         Changed?.Invoke();
         return result;
     }

@@ -141,6 +141,12 @@ public partial class MapView : Control
             if (_table.TerrainAt(x, y) == Terrain.Rock)
                 DrawRock(CellCenter(x, y), cell, line);
 
+        foreach (var exit in _table.Exits)
+            for (var x = exit.X; x < exit.X + exit.W; x++)
+            for (var y = exit.Y; y < exit.Y + exit.H; y++)
+                if (!_table.IsUnexplored(x, y))
+                    DrawExit(x, y, cell, line);
+
         var dragged = _dragId is null ? null : _table.FindToken(_dragId);
         if (dragged is not null) DrawDragPreview(dragged, cell, line);
 
@@ -230,6 +236,28 @@ public partial class MapView : Control
         }
     }
 
+    /// <summary>Marca dorada con una flecha hacia el borde más cercano: por ahí se sale del mapa.</summary>
+    private void DrawExit(int x, int y, float cell, float line)
+    {
+        var rect = CellRect(x, y).Grow(-line * 1.2f);
+        DrawRect(rect, new Color(Ui.Gold, 0.55f));
+        DrawRect(rect, Ui.Gold.Darkened(0.25f), false, line);
+
+        var distances = new[] { x, _table!.Width - 1 - x, y, _table.Height - 1 - y };
+        var nearest = Array.IndexOf(distances, distances.Min());
+        var dir = nearest switch { 0 => Vector2.Left, 1 => Vector2.Right, 2 => Vector2.Up, _ => Vector2.Down };
+        var side = new Vector2(-dir.Y, dir.X);
+        var c = CellCenter(x, y);
+        var arrow = new[]
+        {
+            c + dir * cell * 0.28f,
+            c - dir * cell * 0.1f + side * cell * 0.26f,
+            c - dir * cell * 0.1f - side * cell * 0.26f,
+        };
+        DrawColoredPolygon(arrow, Ui.Ink);
+        DrawLine(c - dir * cell * 0.1f, c - dir * cell * 0.3f, Ui.Ink, line * 1.6f);
+    }
+
     private static readonly float[] RockShape = { 0.36f, 0.30f, 0.33f, 0.26f, 0.31f, 0.35f, 0.29f, 0.34f, 0.27f, 0.32f };
 
     private void DrawRock(Vector2 center, float cell, float line)
@@ -248,7 +276,7 @@ public partial class MapView : Control
 
     private void DrawFog(float cell, float line)
     {
-        var fog = new Color("1d1712", 0.93f);
+        var fog = new Color("1d1712");
         for (var x = 0; x < _table!.Width; x++)
         for (var y = 0; y < _table.Height; y++)
         {
@@ -342,6 +370,10 @@ public partial class MapView : Control
             case "hat":
                 DrawColoredPolygon(new[] { c + new Vector2(0, -r * 0.75f), c + new Vector2(r * 0.4f, r * 0.25f), c + new Vector2(-r * 0.4f, r * 0.25f) }, white);
                 DrawRect(new Rect2(c + new Vector2(-r * 0.68f, r * 0.25f), new Vector2(r * 1.36f, r * 0.24f)), white);
+                break;
+            case "mushroom":
+                DrawRect(new Rect2(c + new Vector2(-r * 0.18f, 0), new Vector2(r * 0.36f, r * 0.6f)), white);
+                DrawArc(c + new Vector2(0, r * 0.05f), r * 0.3f, Mathf.Pi, Mathf.Tau, 16, white, r * 0.6f, true);
                 break;
             case "sun":
                 DrawCircle(c, r * 0.3f, white);

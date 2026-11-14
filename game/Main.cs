@@ -9,9 +9,17 @@ namespace RoleDMFable;
 /// </summary>
 public partial class Main : Control
 {
-    private const string SampleScene = "res://data/scenes/sala_del_puente.json";
+    private const string ScenesFolder = "res://data/scenes";
+    private const string StartScene = "sala_del_puente";
+    private const string SavePath = "user://partida.json";
+    private const double SaveDelaySeconds = 0.5;
 
-    private TableState _table = null!;
+    private Campaign _game = null!;
+    private TableState _table => _game.Current;
+    private Label _sceneLabel = null!;
+    private bool _ephemeral;
+    private bool _refreshQueued;
+    private double _saveCountdown = -1;
     private MapView _map = null!;
     private DiceTray _dice = null!;
     private VBoxContainer _seats = null!;
@@ -21,24 +29,153 @@ public partial class Main : Control
 
     public override void _Ready()
     {
-        _table = new TableState(SceneSpec.FromJson(Godot.FileAccess.GetFileAsString(SampleScene)));
-        _activeSeat = _table.Tokens.Where(t => t.Seat is not null).Select(t => t.Seat!.Value).DefaultIfEmpty(1).Min();
+        var args = OS.GetCmdlineUserArgs();
+        var capture = args.FirstOrDefault(a => a.StartsWith("--captura="));
+        // Las capturas de revisión no leen ni pisan la partida guardada del jugador.
+        _ephemeral = capture is not null;
 
+        string? notice = null;
+        var loaded = _ephemeral ? null : TryLoadSave(out notice);
         BuildLayout();
+        StartGame(loaded ?? NewCampaign(), isNew: loaded is null);
+        if (notice is not null) Say("Mesa", notice);
 
-        _map.SetTable(_table);
-        _table.Changed += RefreshSeats;
-        RefreshSeats();
-
-        Say("Mesa", $"Escena cargada: {_table.SceneName}. Arrastra una figurita para moverla y usa la bandeja para tirar dados.");
-        Say("Mesa", "El máster todavía no está conectado: llegará en la fase 1.");
-
-        var capture = OS.GetCmdlineUserArgs().FirstOrDefault(a => a.StartsWith("--captura="));
         if (capture is not null)
-            _ = CaptureAndQuit(capture["--captura=".Length..], OS.GetCmdlineUserArgs().Contains("--arrastrar"));
+            _ = CaptureAndQuit(capture["--captura=".Length..], args.Contains("--arrastrar"), args.Contains("--viajar"));
     }
 
-    public override void _ExitTree() => _table.Changed -= RefreshSeats;
+    public override void _Process(double delta)
+    {
+        if (_saveCountdown < 0) return;
+        _saveCountdown -= delta;
+        if (_saveCountdown < 0) SaveNow();
+    }
+
+    public override void _Notification(int what)
+    {
+        if (what == NotificationWMCloseRequest && _saveCountdown >= 0) SaveNow();
+    }
+
+    // ---------- Partida: nueva, cargar y guardar ----------
+
+    private static Campaign NewCampaign()
+    {
+        var scenes = DirAccess.GetFilesAt(ScenesFolder)
+            .Where(file => file.EndsWith(".json"))
+            .OrderBy(file => file)
+            .Select(file => SceneSpec.FromJson(Godot.FileAccess.GetFileAsString($"{ScenesFolder}/{file}")));
+        return new Campaign("Partida de prueba", scenes, StartScene);
+    }
+
+    private static Campaign? TryLoadSave(out string? notice)
+    {
+        notice = null;
+        if (!Godot.FileAccess.FileExists(SavePath)) return null;
+        try
+        {
+            return Campaign.FromJson(Godot.FileAccess.GetFileAsString(SavePath));
+        }
+        catch (FormatException e)
+        {
+            // No se borra: se aparta por si se puede recuperar a mano.
+            DirAccess.RenameAbsolute(SavePath, SavePath + ".roto");
+            notice = $"No se pudo cargar la partida guardada ({e.Message}) y se ha empezado una nueva. La anterior queda apartada como partida.json.roto.";
+            return null;
+        }
+    }
+
+    private void StartGame(Campaign game, bool isNew)
+    {
+        if (_game is not null) _game.Changed -= OnGameChanged;
+        _game = game;
+        _game.Changed += OnGameChanged;
+        _activeSeat = _game.Scenes.SelectMany(s => s.Tokens).Where(t => t.Seat is not null).Select(t => t.Seat!.Value).DefaultIfEmpty(1).Min();
+
+        _log.Clear();
+        foreach (var entry in _game.Log) AppendLog(entry.Who, entry.Text);
+        ShowCurrentScene();
+
+        if (isNew)
+        {
+            Say("Mesa", $"Empieza la partida en {_table.SceneName}. Arrastra una figurita para moverla; si un héroe pisa una salida dorada, el grupo pasa al siguiente lugar.");
+            Say("Mesa", "La partida se guarda sola. El máster todavía no está conectado: llegará en la fase 1.");
+        }
+        else
+        {
+            Say("Mesa", $"Partida retomada en {_table.SceneName}.");
+        }
+    }
+
+    private void ShowCurrentScene()
+    {
+        _map.SetTable(_table);
+        _sceneLabel.Text = _table.SceneName;
+        RefreshSeats();
+    }
+
+    private void OnGameChanged()
+    {
+        if (!_ephemeral) _saveCountdown = SaveDelaySeconds;
+        if (_refreshQueued) return;
+        _refreshQueued = true;
+        Callable.From(() =>
+        {
+            _refreshQueued = false;
+            RefreshSeats();
+        }).CallDeferred();
+    }
+
+    private void SaveNow()
+    {
+        _saveCountdown = -1;
+        // Se escribe en un archivo aparte y luego se cambia por el bueno, para no dejarlo a medias.
+        var temp = SavePath + ".tmp";
+        using (var file = Godot.FileAccess.Open(temp, Godot.FileAccess.ModeFlags.Write))
+        {
+            if (file is null)
+            {
+                GD.PushError($"No se pudo guardar la partida: {Godot.FileAccess.GetOpenError()}");
+                return;
+            }
+            file.StoreString(_game.ToJson());
+        }
+        var error = DirAccess.RenameAbsolute(temp, SavePath);
+        if (error != Error.Ok) GD.PushError($"No se pudo guardar la partida: {error}");
+    }
+
+    private void OnTokenMoved(string id, int feet)
+    {
+        Say(_table.FindToken(id)!.Name, $"se mueve {feet} pies.");
+        var travel = _game.TryTravel(id);
+        if (travel is not null)
+        {
+            ShowCurrentScene();
+            var way = travel.Label.Length > 0 ? $" por «{travel.Label}»" : "";
+            Say("Mesa", $"El grupo sale de {travel.FromScene}{way} y llega a {travel.ToScene}.");
+        }
+        else if (_table.FindToken(id) is { Kind: TokenKind.Hero } hero && _table.ExitAt(hero.X, hero.Y) is not null)
+        {
+            Say("Mesa", "El grupo no cabe al otro lado de esa salida.");
+        }
+    }
+
+    private void AskNewGame()
+    {
+        var dialog = new ConfirmationDialog
+        {
+            Title = "Nueva partida",
+            DialogText = "Se borrará la partida guardada y empezarás de cero.",
+            OkButtonText = "Empezar de cero",
+            CancelButtonText = "Seguir jugando",
+        };
+        dialog.Confirmed += () => StartGame(NewCampaign(), isNew: true);
+        dialog.VisibilityChanged += () =>
+        {
+            if (!dialog.Visible) dialog.QueueFree();
+        };
+        AddChild(dialog);
+        dialog.PopupCentered();
+    }
 
     // ---------- Construcción de la pantalla ----------
 
@@ -79,7 +216,7 @@ public partial class Main : Control
         body.AddChild(center);
 
         _map = new MapView { SizeFlagsVertical = SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(320, 240) };
-        _map.TokenMoved += (id, feet) => Say(_table.FindToken(id)!.Name, $"se mueve {feet} pies.");
+        _map.TokenMoved += OnTokenMoved;
         _map.MoveRefused += (id, reason) => Say("Mesa", $"{_table.FindToken(id)?.Name ?? "La ficha"} no se mueve. {reason}");
         _map.SelectionChanged += id =>
         {
@@ -107,9 +244,14 @@ public partial class Main : Control
         row.AddThemeConstantOverride("separation", 16);
         bar.AddChild(row);
         row.AddChild(Ui.Text("Partida de prueba", 24, Ui.Gold, title: true));
-        row.AddChild(Ui.Text(_table.SceneName, 15, Ui.Parchment));
+        _sceneLabel = Ui.Text("", 15, Ui.Parchment);
+        row.AddChild(_sceneLabel);
         row.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
-        row.AddChild(Ui.Text("Fase 0 · un solo PC, sin máster todavía", 14, Ui.Parchment));
+        row.AddChild(Ui.Text("Se guarda sola · un solo PC, sin máster todavía", 14, Ui.Parchment));
+        var fresh = Ui.Button("Nueva partida", Ui.Parchment, 13);
+        fresh.CustomMinimumSize = new Vector2(0, 44);
+        fresh.Pressed += AskNewGame;
+        row.AddChild(fresh);
         return bar;
     }
 
@@ -303,6 +445,12 @@ public partial class Main : Control
 
     private void Say(string who, string text)
     {
+        AppendLog(who, text);
+        _game.AddLog(who, text);
+    }
+
+    private void AppendLog(string who, string text)
+    {
         if (_log.GetParsedText().Length > 0) _log.AppendText("\n\n");
         _log.AppendText($"[b]{Escape(who)}[/b]  {Escape(text)}");
     }
@@ -312,8 +460,15 @@ public partial class Main : Control
 
     // ---------- Captura para revisar el aspecto sin abrir el editor ----------
 
-    private async Task CaptureAndQuit(string path, bool drag)
+    private async Task CaptureAndQuit(string path, bool drag, bool travel)
     {
+        if (travel)
+        {
+            // Lleva a Kael hasta la salida del este para ver el segundo lugar.
+            _table.MoveToken("goblin_1", 8, 5);
+            _table.MoveToken("kael", 12, 4);
+            OnTokenMoved("kael", 40);
+        }
         _map.Select(ActiveToken()?.Id);
         _dice.Roll("2d6+3");
         await ToSignal(GetTree().CreateTimer(1.2), SceneTreeTimer.SignalName.Timeout);
