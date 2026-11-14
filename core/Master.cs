@@ -36,6 +36,8 @@ public sealed class MasterToolbox
     /// <summary>El grupo ha pasado a otro lugar por una acción del máster.</summary>
     public event Action<TravelResult>? Travelled;
 
+    private const string TokenSchema = """{"type":"object","properties":{"nombre":{"type":"string"},"tipo":{"type":"string","enum":["enemigo","pnj"]},"x":{"type":"integer"},"y":{"type":"integer"},"pv":{"type":"integer","description":"Puntos de vida"},"icono":{"type":"string","enum":["persona","guerrero","mago","clerigo","seta","goblin","goblin_jefe"],"description":"Aspecto de la figurita. Si ninguno encaja, persona."},"color":{"type":"string","description":"Color de la peana en hexadecimal, por ejemplo #b8472f. Opcional."},"papel":{"type":"string","description":"Qué es, en pocas palabras: «lobo hambriento», «posadera»"}},"required":["nombre","tipo","x","y","pv"]}""";
+
     public static IReadOnlyList<MasterTool> Tools { get; } = new[]
     {
         new MasterTool("consultar_mesa",
@@ -62,6 +64,24 @@ public sealed class MasterToolbox
         new MasterTool("terminar_combate",
             "Termina el combate en marcha cuando un bando ha caído, huido o se ha rendido.",
             """{"type":"object","properties":{}}"""),
+        new MasterTool("crear_lugar",
+            "Crea un lugar nuevo con su mapa y lleva allí al grupo. Úsala cuando la aventura pase a un sitio que todavía no existe en la partida: antes de narrarlo, constrúyelo. Dibuja el plano como filas de texto, todas igual de largas, con la misma leyenda que ves en el estado: . suelo, # muro, ~ agua, = puente, o roca. Que el plano refleje lo que vas a contar (tamaño, paredes, agua, por dónde se entra) y deja sitio para moverse. Tamaño habitual: de 10 a 16 columnas y de 8 a 12 filas.",
+            """{"type":"object","properties":{"nombre":{"type":"string","description":"Nombre del lugar, como lo verán los jugadores"},"plano":{"type":"array","items":{"type":"string"},"description":"Filas del mapa de arriba abajo; cada carácter es una casilla"},"llegada":{"type":"object","description":"Casilla del lugar nuevo donde aparece el grupo","properties":{"x":{"type":"integer"},"y":{"type":"integer"}},"required":["x","y"]},"puerta":{"type":"object","description":"Opcional. Casilla del lugar ACTUAL por donde se pasa al nuevo (una puerta, una escalera, un sendero). Crea salidas de ida y vuelta entre los dos. Omítela si es un viaje largo sin paso directo.","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"etiqueta":{"type":"string","description":"Qué es el paso: «Puerta de la bodega»"}},"required":["x","y"]},"niebla":{"type":"boolean","description":"true si el lugar empieza sin explorar y se va descubriendo al avanzar (una mazmorra, una cueva). false si se ve entero al llegar."},"fichas":{"type":"array","description":"Criaturas y personajes que hay en el lugar","items":TOKEN}},"required":["nombre","plano","llegada"]}""".Replace("TOKEN", TokenSchema)),
+        new MasterTool("ir_a_lugar",
+            "Lleva al grupo a un lugar que ya existe en la partida (ves la lista en cada turno). Úsala cuando vuelvan a un sitio conocido sin pisar una salida.",
+            """{"type":"object","properties":{"lugar":{"type":"string","description":"Id o nombre del lugar"},"x":{"type":"integer","description":"Opcional: columna donde aparecen"},"y":{"type":"integer","description":"Opcional: fila donde aparecen"}},"required":["lugar"]}"""),
+        new MasterTool("poner_ficha",
+            "Pone en el lugar actual una criatura o un personaje no jugador nuevo. Úsala antes de narrar que alguien aparece. Devuelve su id.",
+            TokenSchema),
+        new MasterTool("quitar_ficha",
+            "Quita del mapa una ficha que ya no está: se ha ido, ha huido o se retira su cuerpo. No vale para héroes.",
+            """{"type":"object","properties":{"ficha":{"type":"string","description":"Id de la ficha"}},"required":["ficha"]}"""),
+        new MasterTool("cambiar_terreno",
+            "Cambia el terreno de una casilla o de un rectángulo del lugar actual: una puerta que se abre (muro a suelo), un puente que se hunde, un derrumbe, una inundación. Úsala cuando lo que narras cambie el mapa.",
+            """{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"ancho":{"type":"integer","description":"Por defecto 1"},"alto":{"type":"integer","description":"Por defecto 1"},"tipo":{"type":"string","enum":["suelo","muro","agua","puente","roca"]}},"required":["x","y","tipo"]}"""),
+        new MasterTool("revelar_zona",
+            "Descubre a los jugadores un rectángulo de la zona sin explorar: abren una puerta, encienden una luz, alguien les enseña un pasadizo.",
+            """{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"ancho":{"type":"integer"},"alto":{"type":"integer"}},"required":["x","y","ancho","alto"]}"""),
         new MasterTool("anotar_ficha",
             "Apunta o cambia un dato en la hoja de personaje de una ficha, por ejemplo «Fuerza» → «16» o «Espada larga» → «+6, daño 1d8+3». Con valor vacío borra el dato. Úsala al crear un personaje con su jugador y cuando un dato cambie.",
             """{"type":"object","properties":{"ficha":{"type":"string","description":"Id de la ficha"},"dato":{"type":"string","description":"Nombre del dato, como lo llama el reglamento"},"valor":{"type":"string","description":"Valor del dato. Vacío para borrarlo."}},"required":["ficha","dato","valor"]}"""),
@@ -118,10 +138,20 @@ public sealed class MasterToolbox
                 "siguiente_turno" => NextTurn(),
                 "terminar_combate" => EndCombat(),
                 "anotar_ficha" => WriteSheet(input),
+                "crear_lugar" => CreatePlace(input),
+                "ir_a_lugar" => GoToPlace(input),
+                "poner_ficha" => PlaceToken(input),
+                "quitar_ficha" => RemoveToken(input),
+                "cambiar_terreno" => ChangeTerrain(input),
+                "revelar_zona" => RevealZone(input),
                 _ => Fail($"No existe la herramienta «{name}»."),
             };
         }
         catch (ArgumentException e)
+        {
+            return Fail(e.Message);
+        }
+        catch (FormatException e)
         {
             return Fail(e.Message);
         }
@@ -195,6 +225,236 @@ public sealed class MasterToolbox
         if (to is null) return Fail(UnknownToken(toName));
         var feet = GridDistance.Feet(from.X, from.Y, to.X, to.Y, _game.Current.CellFeet);
         return new ToolOutcome($"Entre {from.Name} y {to.Name} hay {feet} pies.");
+    }
+
+    // ---------- Lugares y fichas que crea el máster ----------
+
+    public const int MinMapSide = 4;
+    public const int MaxMapWidth = 40;
+    public const int MaxMapHeight = 30;
+    public const int MaxTokensPerPlace = 40;
+
+    private ToolOutcome CreatePlace(IReadOnlyDictionary<string, JsonElement> input)
+    {
+        var name = Text(input, "nombre").Trim();
+        if (name.Length > 60) name = name[..60];
+        if (!input.TryGetValue("plano", out var plan) || plan.ValueKind != JsonValueKind.Array)
+            return Fail("Falta «plano»: una lista de filas de texto con . # ~ = o.");
+        var rows = plan.EnumerateArray().Select(r => r.ValueKind == JsonValueKind.String ? r.GetString() ?? "" : "").ToList();
+        if (rows.Count < MinMapSide || rows.Count > MaxMapHeight)
+            return Fail($"El plano tiene que tener entre {MinMapSide} y {MaxMapHeight} filas; tiene {rows.Count}.");
+        var width = rows[0].Length;
+        if (width < MinMapSide || width > MaxMapWidth)
+            return Fail($"Cada fila tiene que tener entre {MinMapSide} y {MaxMapWidth} casillas; la primera tiene {width}.");
+
+        var features = new List<FeatureSpec>();
+        for (var y = 0; y < rows.Count; y++)
+        {
+            if (rows[y].Length != width)
+                return Fail($"Todas las filas tienen que medir lo mismo. La fila {y} mide {rows[y].Length} y la primera {width}.");
+            for (var x = 0; x < width; x++)
+            {
+                Terrain terrain;
+                switch (rows[y][x])
+                {
+                    case '.': continue;
+                    case '#': terrain = Terrain.Wall; break;
+                    case '~': terrain = Terrain.Water; break;
+                    case '=': terrain = Terrain.Bridge; break;
+                    case 'o': terrain = Terrain.Rock; break;
+                    default: return Fail($"Carácter «{rows[y][x]}» no válido en la fila {y}, columna {x}. Usa solo . # ~ = o.");
+                }
+                features.Add(new FeatureSpec(terrain, x, y));
+            }
+        }
+
+        if (!input.TryGetValue("llegada", out var arrival) || arrival.ValueKind != JsonValueKind.Object)
+            return Fail("Falta «llegada»: la casilla {x, y} del lugar nuevo donde aparece el grupo.");
+        var arrivalFields = Fields(arrival);
+        int arriveX = Int(arrivalFields, "x"), arriveY = Int(arrivalFields, "y");
+        if (arriveX < 0 || arriveY < 0 || arriveX >= width || arriveY >= rows.Count)
+            return Fail($"La llegada ({arriveX}, {arriveY}) está fuera del plano.");
+
+        var from = _game.Current;
+        var id = _game.NewSceneId(name);
+        var heroes = from.Tokens.Where(t => t.Kind == TokenKind.Hero).ToList();
+
+        var tokens = new List<TokenSpec>();
+        if (input.TryGetValue("fichas", out var list) && list.ValueKind == JsonValueKind.Array)
+        {
+            if (list.GetArrayLength() > MaxTokensPerPlace) return Fail($"Demasiadas fichas: como mucho {MaxTokensPerPlace} por lugar.");
+            var taken = new HashSet<string>(heroes.Select(h => h.Id), StringComparer.Ordinal);
+            foreach (var item in list.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) return Fail("Cada ficha necesita nombre, tipo, x, y y pv.");
+                var spec = ReadToken(Fields(item), taken);
+                taken.Add(spec.Id);
+                tokens.Add(spec);
+            }
+        }
+
+        // Una puerta une los dos lugares con salidas de ida y vuelta.
+        ExitSpec? wayIn = null;
+        var exits = new List<ExitSpec>();
+        if (input.TryGetValue("puerta", out var door) && door.ValueKind == JsonValueKind.Object)
+        {
+            var doorFields = Fields(door);
+            int doorX = Int(doorFields, "x"), doorY = Int(doorFields, "y");
+            if (!from.InBounds(doorX, doorY)) return Fail($"La puerta ({doorX}, {doorY}) está fuera del mapa de {from.SceneName}.");
+            if (!TableState.IsWalkable(from.TerrainAt(doorX, doorY))) return Fail($"La puerta ({doorX}, {doorY}) tiene que estar en una casilla que se pueda pisar.");
+            if (from.ExitAt(doorX, doorY) is not null) return Fail($"En ({doorX}, {doorY}) ya hay una salida.");
+            wayIn = new ExitSpec(doorX, doorY, id, arriveX, arriveY, OptionalText(doorFields, "etiqueta") ?? name);
+            exits.Add(new ExitSpec(arriveX, arriveY, from.SceneId, doorX, doorY, from.SceneName));
+        }
+
+        var fog = input.TryGetValue("niebla", out var fogFlag) && fogFlag.ValueKind == JsonValueKind.True;
+        var scene = new SceneSpec(id, name, width, rows.Count, from.CellFeet, Terrain.Floor, features, tokens,
+            fog ? new[] { new CellRect(0, 0, width, rows.Count) } : null, exits);
+
+        // Se prueba en un borrador: si algo no cuadra, la partida no se toca.
+        TableState draft;
+        try
+        {
+            draft = new TableState(scene);
+        }
+        catch (FormatException e)
+        {
+            return Fail(e.Message);
+        }
+        foreach (var token in draft.Tokens)
+        {
+            if (!TableState.IsWalkable(draft.TerrainAt(token.X, token.Y)))
+                return Fail($"{token.Name} está en ({token.X}, {token.Y}), que no se puede pisar. Ponlo sobre suelo o puente.");
+            if (draft.Tokens.Any(other => other != token && other.X == token.X && other.Y == token.Y))
+                return Fail($"Hay dos fichas en ({token.X}, {token.Y}).");
+        }
+        if (draft.FreeCellsNear(arriveX, arriveY, heroes.Count).Count < heroes.Count)
+            return Fail($"El grupo ({heroes.Count}) no cabe junto a la llegada ({arriveX}, {arriveY}). Deja suelo libre alrededor.");
+
+        try
+        {
+            _game.AddScene(scene);
+            if (wayIn is not null) _game.AddExit(from.SceneId, wayIn);
+        }
+        catch (FormatException e)
+        {
+            return Fail(e.Message);
+        }
+
+        var travel = _game.MoveParty(id, arriveX, arriveY, wayIn?.Label ?? "");
+        if (travel is not null) Travelled?.Invoke(travel);
+        return new ToolOutcome($"Creado «{name}» (id {id}) y el grupo ya está allí. Los jugadores ven el mapa nuevo.\n\n{MasterPrompt.DescribeTable(_game.Current)}");
+    }
+
+    private ToolOutcome GoToPlace(IReadOnlyDictionary<string, JsonElement> input)
+    {
+        var wanted = Text(input, "lugar");
+        var from = _game.Current;
+        var to = _game.FindScene(wanted);
+        if (to is null) return Fail($"No existe el lugar «{wanted}». Lugares: {string.Join(", ", _game.Scenes.Select(s => s.SceneId))}.");
+        if (to == from) return Fail($"El grupo ya está en {to.SceneName}.");
+
+        // Sin casilla indicada, se llega por la salida que une los dos lugares, o al centro.
+        var back = to.Exits.FirstOrDefault(e => e.To == from.SceneId);
+        var x = input.ContainsKey("x") ? Int(input, "x") : back?.X ?? to.Width / 2;
+        var y = input.ContainsKey("y") ? Int(input, "y") : back?.Y ?? to.Height / 2;
+        if (!to.InBounds(x, y)) return Fail($"La casilla ({x}, {y}) está fuera del mapa de {to.SceneName}.");
+
+        var travel = _game.MoveParty(to.SceneId, x, y);
+        if (travel is null) return Fail($"El grupo no cabe junto a ({x}, {y}) en {to.SceneName}. Elige otra casilla.");
+        Travelled?.Invoke(travel);
+        return new ToolOutcome($"El grupo ha pasado de {travel.FromScene} a {travel.ToScene}.\n\n{MasterPrompt.DescribeTable(_game.Current)}");
+    }
+
+    private ToolOutcome PlaceToken(IReadOnlyDictionary<string, JsonElement> input)
+    {
+        var table = _game.Current;
+        if (table.Tokens.Count >= MaxTokensPerPlace + 10) return Fail("Hay demasiadas fichas en este lugar. Quita alguna antes.");
+        var taken = new HashSet<string>(_game.Scenes.SelectMany(s => s.Tokens).Where(t => t.Kind == TokenKind.Hero || InTable(t, table)).Select(t => t.Id), StringComparer.Ordinal);
+        var token = table.PlaceToken(ReadToken(input, taken));
+        var hidden = table.IsUnexplored(token.X, token.Y) ? " Está en zona sin explorar: los jugadores aún no la ven." : "";
+        return new ToolOutcome($"{token.Name} (id {token.Id}) está en ({token.X}, {token.Y}) con {token.Hp} PV.{hidden}");
+    }
+
+    private static bool InTable(Token token, TableState table) => table.FindToken(token.Id) == token;
+
+    private ToolOutcome RemoveToken(IReadOnlyDictionary<string, JsonElement> input)
+    {
+        var wanted = Text(input, "ficha");
+        var token = FindToken(wanted);
+        if (token is null) return Fail(UnknownToken(wanted));
+        if (token.Kind == TokenKind.Hero) return Fail($"{token.Name} es un héroe: sus fichas no se quitan.");
+        _game.Current.DeleteToken(token.Id);
+        return new ToolOutcome($"{token.Name} ya no está en la mesa.");
+    }
+
+    private ToolOutcome ChangeTerrain(IReadOnlyDictionary<string, JsonElement> input)
+    {
+        var terrain = Text(input, "tipo").Trim().ToLowerInvariant() switch
+        {
+            "suelo" => Terrain.Floor,
+            "muro" => Terrain.Wall,
+            "agua" => Terrain.Water,
+            "puente" => Terrain.Bridge,
+            "roca" => Terrain.Rock,
+            _ => throw new ArgumentException("El tipo tiene que ser suelo, muro, agua, puente o roca."),
+        };
+        int x = Int(input, "x"), y = Int(input, "y");
+        var w = input.ContainsKey("ancho") ? Int(input, "ancho") : 1;
+        var h = input.ContainsKey("alto") ? Int(input, "alto") : 1;
+        var changed = _game.Current.SetTerrain(x, y, w, h, terrain);
+        return new ToolOutcome(changed == 0 ? "Ese terreno ya era así: no ha cambiado nada." : $"Cambiadas {changed} casillas. Los jugadores lo ven en el mapa.");
+    }
+
+    private ToolOutcome RevealZone(IReadOnlyDictionary<string, JsonElement> input)
+    {
+        int x = Int(input, "x"), y = Int(input, "y");
+        var w = input.ContainsKey("ancho") ? Int(input, "ancho") : 1;
+        var h = input.ContainsKey("alto") ? Int(input, "alto") : 1;
+        if (w < 1 || h < 1) return Fail("El ancho y el alto tienen que ser al menos 1.");
+        _game.Current.Reveal(x, y, w, h);
+        return new ToolOutcome("Zona descubierta: los jugadores ya ven lo que hay.");
+    }
+
+    private static Dictionary<string, JsonElement> Fields(JsonElement item) => item.EnumerateObject().ToDictionary(p => p.Name, p => p.Value);
+
+    /// <summary>Lee una ficha nueva (enemigo o personaje no jugador) y le da un id libre sacado de su nombre.</summary>
+    private static TokenSpec ReadToken(IReadOnlyDictionary<string, JsonElement> fields, ISet<string> taken)
+    {
+        var name = Text(fields, "nombre").Trim();
+        if (name.Length == 0) throw new ArgumentException("La ficha necesita un nombre.");
+        if (name.Length > 40) name = name[..40];
+        var kind = Text(fields, "tipo").Trim().ToLowerInvariant() switch
+        {
+            "enemigo" => TokenKind.Enemy,
+            "pnj" => TokenKind.Npc,
+            _ => throw new ArgumentException("El tipo de ficha tiene que ser enemigo o pnj."),
+        };
+        var hp = Int(fields, "pv");
+        if (hp < 1 || hp > 9999) throw new ArgumentException("Los PV tienen que estar entre 1 y 9999.");
+        var icon = (OptionalText(fields, "icono") ?? "").Trim().ToLowerInvariant() switch
+        {
+            "" or "persona" => "",
+            "guerrero" => "sword",
+            "mago" => "hat",
+            "clerigo" or "clérigo" => "sun",
+            "seta" => "mushroom",
+            "goblin" => "goblin",
+            "goblin_jefe" => "goblin_boss",
+            _ => throw new ArgumentException("El icono tiene que ser persona, guerrero, mago, clerigo, seta, goblin o goblin_jefe."),
+        };
+        var color = OptionalText(fields, "color") ?? (kind == TokenKind.Enemy ? icon.StartsWith("goblin", StringComparison.Ordinal) ? "#6aa84f" : "#b8472f" : "#7d8a99");
+        if (color.Length != 7 || color[0] != '#' || !color.Skip(1).All(Uri.IsHexDigit))
+            throw new ArgumentException("El color tiene que ser hexadecimal, como #b8472f.");
+        var role = (OptionalText(fields, "papel") ?? "").Trim();
+        if (role.Length > 60) role = role[..60];
+
+        var slug = new string(RulesText.Fold(name).Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray()).Trim('_');
+        while (slug.Contains("__")) slug = slug.Replace("__", "_");
+        if (slug.Length == 0) slug = "ficha";
+        var id = slug;
+        for (var n = 2; taken.Contains(id); n++) id = $"{slug}_{n}";
+        return new TokenSpec(id, name, kind, Int(fields, "x"), Int(fields, "y"), hp, hp, color, icon, role);
     }
 
     // ---------- Historia ----------
@@ -477,7 +737,7 @@ public static class MasterPrompt
         Eres el máster de una partida de rol de mesa que se juega en un tablero virtual, en español. Los jugadores llevan a los héroes; tú llevas el mundo, los enemigos y los personajes no jugadores.
 
         Cómo funciona la mesa
-        - Los jugadores ven siempre el mapa con las fichas. Lo que narres tiene que coincidir con lo que hay en la mesa: no inventes salas, criaturas ni objetos que no aparezcan en el estado que se te da. Puedes añadir detalles de ambiente (olores, sonidos, luz) que no contradigan el mapa.
+        - Los jugadores ven siempre el mapa con las fichas. Lo que narres tiene que coincidir con lo que hay en la mesa: no narres salas ni criaturas que no estén en el estado que se te da. Si la historia necesita algo nuevo, primero ponlo en la mesa con las herramientas y después nárralo. Puedes añadir detalles de ambiente (olores, sonidos, luz) que no contradigan el mapa.
         - En cada turno recibes el estado de la mesa, lo último que ha pasado y lo que dice o hace un jugador.
         - El mapa es una cuadrícula. Las coordenadas son (x, y): x es la columna, empezando en 0 por la izquierda; y es la fila, empezando en 0 por arriba. Cada casilla mide lo que indique el estado, normalmente 5 pies.
         - Las zonas marcadas como no exploradas y las fichas marcadas como ocultas todavía no las ven los jugadores: no las describas ni las reveles hasta que las descubran.
@@ -487,6 +747,13 @@ public static class MasterPrompt
         - Narra el resultado después de ver lo que devuelve la herramienta, nunca antes.
         - Si una herramienta falla, lee el motivo y corrige o cambia de plan. No finjas que ha funcionado.
         - Los jugadores pueden mover sus fichas y tirar dados por su cuenta: lo verás en lo último que ha pasado. Dalo por bueno.
+
+        El mapa lo construyes tú
+        - La aventura no se queda en los lugares que ya existen. Cuando el grupo vaya a un sitio nuevo (cruzan una puerta que no llevaba a ningún lugar, viajan, bajan a un sótano), créalo con crear_lugar antes de describirlo, con las criaturas y personajes que haya dentro.
+        - Dibuja planos sencillos y jugables que encajen con lo que cuentas: una posada tiene paredes alrededor y una puerta; un claro del bosque usa rocas y agua; un puente cruza un río. Rodea de muro los interiores. Piensa por dónde entra el grupo y deja suelo libre junto a la llegada.
+        - Si se pasa andando de un lugar a otro, indica la puerta: quedan unidos por salidas de ida y vuelta y los jugadores podrán volver solos. Para volver a un lugar conocido sin salida directa, usa ir_a_lugar.
+        - Cuando alguien aparezca, poner_ficha; cuando se vaya o ya no pinte nada, quitar_ficha. Cuando lo que ocurre cambie el sitio (una puerta abierta, un derrumbe, un puente roto), cambiar_terreno.
+        - No rehagas un lugar que ya existe ni crees uno por cada frase: un lugar nuevo es un cambio de escena.
 
         Reglas
         - Si el estado indica que hay reglamentos cargados, esas son las reglas de la mesa. Antes de resolver algo que dependa de ellas (un ataque, una maniobra, un conjuro, una prueba), búscalo con consultar_reglas y aplica lo que diga el texto. No cites de memoria: si no lo has leído en la consulta, no lo des por regla. Cuando ayude, di de dónde sale (libro y página) en pocas palabras.
@@ -548,6 +815,12 @@ public static class MasterPrompt
         var builder = new StringBuilder();
         builder.AppendLine("ESTADO DE LA MESA");
         builder.AppendLine(DescribeTable(game.Current));
+        builder.AppendLine();
+
+        var others = game.Scenes.Where(s => s != game.Current).Select(s => $"{s.SceneName} (id {s.SceneId})").ToList();
+        builder.AppendLine(others.Count > 0
+            ? $"OTROS LUGARES QUE YA EXISTEN: {string.Join("; ", others)}."
+            : "OTROS LUGARES QUE YA EXISTEN: ninguno.");
         builder.AppendLine();
 
         builder.AppendLine("HISTORIA");

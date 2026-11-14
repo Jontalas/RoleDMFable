@@ -1052,6 +1052,20 @@ public partial class Main : Control
             _game.Story.StartCountdown("Llegan refuerzos goblin", 5);
             _game.Story.AdvanceCountdown("Llegan refuerzos goblin", 2);
         }
+        if (OS.GetCmdlineUserArgs().Contains("--lugar"))
+        {
+            // Lo mismo que pediría el máster al llevar al grupo a un sitio nuevo.
+            var place = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>("""
+                {"nombre":"Posada del Jabalí Tuerto",
+                 "plano":["##############","#......#.....#","#.oo...#.....#","#......#.....#","#............#","#......###..##","#............#","#..~~........#","#..~~....oo..#","######..######"],
+                 "llegada":{"x":7,"y":8},
+                 "fichas":[{"nombre":"Posadera","tipo":"pnj","x":3,"y":3,"pv":8,"papel":"dueña de la posada","color":"#c98a2b"},
+                           {"nombre":"Viajero encapuchado","tipo":"pnj","x":10,"y":2,"pv":12,"icono":"mago","papel":"forastero callado","color":"#5b5b6b"},
+                           {"nombre":"Matón","tipo":"enemigo","x":10,"y":7,"pv":9,"icono":"guerrero","papel":"busca pelea"}]}
+                """)!;
+            var outcome = _tools.Execute("crear_lugar", place);
+            if (outcome.IsError) GD.PushError(outcome.Result);
+        }
         if (OS.GetCmdlineUserArgs().Contains("--combate"))
         {
             _table.SetSheetEntry("kael", "Fuerza", "16");

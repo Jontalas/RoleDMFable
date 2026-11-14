@@ -80,7 +80,8 @@ public sealed class TableState
     public int Height { get; }
     public int CellFeet { get; }
     public IReadOnlyList<Token> Tokens => _order;
-    public IReadOnlyList<ExitSpec> Exits { get; }
+    private readonly List<ExitSpec> _exits;
+    public IReadOnlyList<ExitSpec> Exits => _exits;
 
     public const int MaxSheetEntries = 60;
     public const int MaxSheetNameLength = 40;
@@ -106,7 +107,7 @@ public sealed class TableState
         Width = spec.Width;
         Height = spec.Height;
         CellFeet = spec.CellFeet;
-        Exits = (spec.Exits ?? Array.Empty<ExitSpec>()).ToArray();
+        _exits = (spec.Exits ?? Array.Empty<ExitSpec>()).ToList();
         _terrain = new Terrain[Width, Height];
         _unexplored = new bool[Width, Height];
 
@@ -358,6 +359,82 @@ public sealed class TableState
     }
 
     internal void NotifyChanged() => Changed?.Invoke();
+
+    internal void AddExit(ExitSpec exit)
+    {
+        _exits.Add(exit);
+        Changed?.Invoke();
+    }
+
+    // ---------- Cambios que hace el máster sobre el lugar ----------
+
+    /// <summary>
+    /// Pone una ficha nueva en la mesa. Lanza <see cref="ArgumentException"/> si el id ya existe
+    /// o la casilla está fuera, ocupada o no se puede pisar.
+    /// </summary>
+    public Token PlaceToken(TokenSpec spec)
+    {
+        if (string.IsNullOrWhiteSpace(spec.Id) || _tokens.ContainsKey(spec.Id)) throw new ArgumentException($"Ya existe una ficha «{spec.Id}».");
+        if (!InBounds(spec.X, spec.Y)) throw new ArgumentException($"La casilla ({spec.X}, {spec.Y}) está fuera del mapa.");
+        if (!IsWalkable(_terrain[spec.X, spec.Y])) throw new ArgumentException($"La casilla ({spec.X}, {spec.Y}) no se puede pisar.");
+        if (TokenAt(spec.X, spec.Y) is { } other) throw new ArgumentException($"La casilla ({spec.X}, {spec.Y}) está ocupada por {other.Name}.");
+        var maxHp = Math.Max(spec.MaxHp, 0);
+        var token = new Token
+        {
+            Id = spec.Id, Name = spec.Name, Kind = spec.Kind, X = spec.X, Y = spec.Y,
+            Hp = Math.Clamp(spec.Hp, 0, maxHp), MaxHp = maxHp,
+            Color = spec.Color, Icon = spec.Icon, Role = spec.Role, Seat = spec.Seat,
+        };
+        foreach (var entry in spec.Sheet ?? Array.Empty<SheetEntry>())
+            if (CleanEntry(entry.Name, entry.Value) is { } clean && token.SheetEntries.Count < MaxSheetEntries)
+                token.SheetEntries.Add(clean);
+        _tokens.Add(token.Id, token);
+        _order.Add(token);
+        if (token.Kind == TokenKind.Hero) RevealAround(token.X, token.Y, notify: false);
+        Changed?.Invoke();
+        return token;
+    }
+
+    /// <summary>Quita una ficha de la mesa y, si estaba en un combate, de su orden de turnos.</summary>
+    public bool DeleteToken(string id)
+    {
+        if (!_tokens.ContainsKey(id)) return false;
+        if (Combat is { } combat && combat.Order.Any(c => c.Token == id))
+        {
+            // Si tenía el turno, pasa al siguiente antes de salir del orden.
+            if (combat.CurrentTokenId == id) Advance();
+            var current = combat.CurrentTokenId;
+            var order = combat.Order.Where(c => c.Token != id).ToList();
+            var turn = order.FindIndex(c => c.Token == current);
+            Combat = order.Count == 0 || turn < 0 ? null : new CombatState(order, combat.Round, turn);
+        }
+        RemoveToken(id);
+        Changed?.Invoke();
+        return true;
+    }
+
+    /// <summary>
+    /// Cambia el terreno de un rectángulo: una puerta que se abre, un puente que cae, un derrumbe.
+    /// Lanza <see cref="ArgumentException"/> si dejaría a una ficha en una casilla que no se puede pisar.
+    /// </summary>
+    public int SetTerrain(int x0, int y0, int w, int h, Terrain terrain)
+    {
+        if (w < 1 || h < 1 || !InBounds(x0, y0) || !InBounds(x0 + w - 1, y0 + h - 1))
+            throw new ArgumentException("La zona se sale del mapa.");
+        if (!IsWalkable(terrain))
+            foreach (var token in _order)
+                if (token.X >= x0 && token.Y >= y0 && token.X < x0 + w && token.Y < y0 + h)
+                    throw new ArgumentException($"{token.Name} está en ({token.X}, {token.Y}). Muévelo antes de cambiar ese terreno.");
+        var changed = 0;
+        Fill(x0, y0, w, h, (x, y) =>
+        {
+            if (_terrain[x, y] == terrain) return;
+            _terrain[x, y] = terrain;
+            changed++;
+        });
+        if (changed > 0) Changed?.Invoke();
+        return changed;
+    }
 
     private bool RevealAround(int cx, int cy, bool notify)
     {
