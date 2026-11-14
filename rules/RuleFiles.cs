@@ -18,7 +18,7 @@ public static class RuleFiles
     /// Lee el archivo y lo trocea. Lanza <see cref="FormatException"/> con un mensaje para el jugador
     /// si el formato no vale o no hay texto. <paramref name="progress"/> recibe de 0 a 1.
     /// </summary>
-    public static Rulebook Import(string path, Action<double>? progress = null, CancellationToken cancel = default)
+    public static Rulebook Import(string path, Action<double>? progress = null, CancellationToken cancel = default, BookKind kind = BookKind.Rules)
     {
         var name = Path.GetFileName(path);
         IReadOnlyList<RulePage> pages;
@@ -40,7 +40,7 @@ public static class RuleFiles
 
         try
         {
-            return Rulebook.FromPages(Path.GetFileNameWithoutExtension(path).Replace('_', ' ').Trim(), name, pages);
+            return Rulebook.FromPages(Path.GetFileNameWithoutExtension(path).Replace('_', ' ').Trim(), name, pages, kind);
         }
         catch (FormatException) when (Path.GetExtension(path).Equals(".pdf", StringComparison.OrdinalIgnoreCase))
         {

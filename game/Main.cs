@@ -430,6 +430,8 @@ public partial class Main : Control
             foreach (var token in others) _seats.AddChild(OtherRow(token));
         }
 
+        AddStoryPanel();
+
         if (ActiveToken() is { } sheetOwner)
         {
             var sheet = Ui.Button($"Ficha de {sheetOwner.Name}", Ui.Parchment, 13);
@@ -441,6 +443,56 @@ public partial class Main : Control
 
         if (_chat is not null) _chat.PlaceholderText = $"Escribe lo que hace {ActiveName()}…";
         RefreshTurnBar();
+    }
+
+    // ---------- Historia ----------
+
+    private void AddStoryPanel()
+    {
+        var story = _game.Story;
+        _seats.AddChild(SectionTitle("LA HISTORIA"));
+        var panel = Ui.Panel(Ui.Parchment, 12, 10, 2);
+        var column = new VBoxContainer();
+        column.AddThemeConstantOverride("separation", 4);
+        panel.AddChild(column);
+
+        var scene = story.SceneTitle.Length > 0 ? $"Escena {story.Scene} · {story.SceneTitle}" : $"Escena {story.Scene}";
+        column.AddChild(Wrapped(scene, 14, 800));
+        if (story.FinalGoal.Length > 0) column.AddChild(Wrapped($"Objetivo: {story.FinalGoal}", 13, 700));
+        foreach (var goal in story.Goals) column.AddChild(Wrapped($"· {goal}", 13, 600));
+        if (story.PastTurningPoint) column.AddChild(Wrapped("La aventura se acerca a su desenlace.", 13, 800));
+        _seats.AddChild(panel);
+
+        foreach (var countdown in story.Countdowns)
+        {
+            var card = Ui.Panel(countdown.Left == 0 ? Ui.Red : Ui.PaleGold, 12, 10, 2);
+            var rows = new VBoxContainer();
+            rows.AddThemeConstantOverride("separation", 6);
+            card.AddChild(rows);
+            rows.AddChild(Wrapped(countdown.Name, 14, 800, countdown.Left == 0 ? Ui.Cream : Ui.Ink));
+            var steps = new HBoxContainer();
+            steps.AddThemeConstantOverride("separation", 4);
+            for (var i = 0; i < countdown.Total; i++)
+            {
+                var step = new Panel { CustomMinimumSize = new Vector2(0, 14), SizeFlagsHorizontal = SizeFlags.ExpandFill };
+                var style = new StyleBoxFlat { BgColor = i < countdown.Left ? Ui.HpRed : Ui.Cream, BorderColor = Ui.Ink };
+                style.SetBorderWidthAll(2);
+                style.SetCornerRadiusAll(4);
+                step.AddThemeStyleboxOverride("panel", style);
+                steps.AddChild(step);
+            }
+            rows.AddChild(steps);
+            card.TooltipText = countdown.Left == 0 ? "Ha llegado a cero" : $"Quedan {countdown.Left} de {countdown.Total}";
+            _seats.AddChild(card);
+        }
+    }
+
+    private static Label Wrapped(string text, int size, int weight, Color? color = null)
+    {
+        var label = Ui.Text(text, size, color ?? Ui.Ink, weight: weight);
+        label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        label.CustomMinimumSize = new Vector2(180, 0);
+        return label;
     }
 
     // ---------- Combate ----------
@@ -720,12 +772,15 @@ public partial class Main : Control
 
     private void RefreshMasterStatus()
     {
-        var books = _rules.Books.Count switch
+        var ruleCount = _rules.BooksOf(BookKind.Rules).Count();
+        var guideCount = _rules.BooksOf(BookKind.Guide).Count();
+        var books = ruleCount switch
         {
             0 => "sin reglamentos",
             1 => "1 reglamento",
-            var count => $"{count} reglamentos",
+            _ => $"{ruleCount} reglamentos",
         };
+        if (guideCount > 0) books += guideCount == 1 ? " · 1 guía" : $" · {guideCount} guías";
         if (!HasMaster)
         {
             _masterStatus.Text = $"Máster sin conectar · {books}";
@@ -820,7 +875,9 @@ public partial class Main : Control
 
         column.AddChild(DialogText(
             "Añade aquí los manuales de tu juego en PDF, Word (.docx) o TXT. El juego los lee una vez, los guarda en este PC "
-            + "y el máster los consulta cuando necesita una regla. También puedes arrastrar los archivos a la ventana.", 600));
+            + "y el máster los consulta cuando necesita una regla. Si arrastras archivos a la ventana se añaden como reglamentos.\n\n"
+            + "Las guías de dirección son libros de consejos para llevar partidas: no son reglas, pero el máster las consulta "
+            + "para decidir cómo llevar una escena.", 600));
 
         _rulesList = new VBoxContainer();
         _rulesList.AddThemeConstantOverride("separation", 6);
@@ -830,10 +887,16 @@ public partial class Main : Control
         _rulesProgress = DialogText("", 800);
         column.AddChild(_rulesProgress);
 
-        var add = new Button { Text = "Añadir archivo…", CustomMinimumSize = new Vector2(0, 44) };
-        add.AddThemeFontOverride("font", Ui.Body(800));
-        add.Pressed += PickRuleFiles;
-        column.AddChild(add);
+        var buttons = new HBoxContainer();
+        buttons.AddThemeConstantOverride("separation", 10);
+        foreach (var (text, kind) in new[] { ("Añadir reglamento…", BookKind.Rules), ("Añadir guía de dirección…", BookKind.Guide) })
+        {
+            var add = new Button { Text = text, CustomMinimumSize = new Vector2(0, 44), SizeFlagsHorizontal = SizeFlags.ExpandFill };
+            add.AddThemeFontOverride("font", Ui.Body(800));
+            add.Pressed += () => PickRuleFiles(kind);
+            buttons.AddChild(add);
+        }
+        column.AddChild(buttons);
 
         dialog.VisibilityChanged += () =>
         {
@@ -860,12 +923,13 @@ public partial class Main : Control
             _rulesList.AddChild(DialogText("Todavía no hay ningún reglamento. El máster usa una regla sencilla de 1d20 contra dificultad.", 700));
             return;
         }
-        foreach (var book in _rules.Books)
+        foreach (var book in _rules.Books.OrderBy(b => b.Kind))
         {
             var row = new HBoxContainer();
             row.AddThemeConstantOverride("separation", 10);
             var pages = book.HasPages ? "con números de página" : "sin números de página";
-            var label = DialogText($"{book.Title}\n{book.FileName} · {book.Passages.Count} pasajes · {pages}", 700);
+            var kind = book.Kind == BookKind.Guide ? "Guía de dirección" : "Reglamento";
+            var label = DialogText($"{book.Title}\n{kind} · {book.FileName} · {book.Passages.Count} pasajes · {pages}", 700);
             label.CustomMinimumSize = new Vector2(400, 0);
             label.SizeFlagsHorizontal = SizeFlags.ExpandFill;
             row.AddChild(label);
@@ -877,24 +941,24 @@ public partial class Main : Control
             {
                 _rulesStore?.Delete(id);
                 _rules.Remove(id);
-                Say("Mesa", $"Reglamento «{title}» quitado.");
+                Say("Mesa", $"«{title}» quitado.");
             };
             row.AddChild(remove);
             _rulesList.AddChild(row);
         }
     }
 
-    private void PickRuleFiles()
+    private void PickRuleFiles(BookKind kind)
     {
         var picker = new FileDialog
         {
-            Title = "Elige uno o varios reglamentos",
+            Title = kind == BookKind.Guide ? "Elige una o varias guías de dirección" : "Elige uno o varios reglamentos",
             Access = FileDialog.AccessEnum.Filesystem,
             FileMode = FileDialog.FileModeEnum.OpenFiles,
             UseNativeDialog = true,
-            Filters = new[] { "*.pdf, *.docx, *.txt, *.md ; Reglamentos (PDF, Word, texto)" },
+            Filters = new[] { "*.pdf, *.docx, *.txt, *.md ; PDF, Word o texto" },
         };
-        picker.FilesSelected += files => _ = ImportRules(files);
+        picker.FilesSelected += files => _ = ImportRules(files, kind);
         picker.VisibilityChanged += () =>
         {
             if (!picker.Visible) picker.QueueFree();
@@ -903,7 +967,7 @@ public partial class Main : Control
         picker.PopupCentered(new Vector2I(900, 600));
     }
 
-    private async Task ImportRules(string[] files)
+    private async Task ImportRules(string[] files, BookKind kind = BookKind.Rules)
     {
         if (_importing is not null)
         {
@@ -918,11 +982,12 @@ public partial class Main : Control
             try
             {
                 // Leer un manual grande tarda unos segundos: se hace aparte para no congelar la mesa.
-                var book = await Task.Run(() => RuleFiles.Import(file, progress => _importPercent = (int)(progress * 100)));
+                var book = await Task.Run(() => RuleFiles.Import(file, progress => _importPercent = (int)(progress * 100), kind: kind));
                 _rulesStore?.Save(book);
                 _rules.Add(book);
-                var pages = book.HasPages ? "" : " Este formato no tiene números de página, así que el máster citará solo el libro.";
-                Say("Mesa", $"Reglamento «{book.Title}» cargado: {book.Passages.Count} pasajes.{pages}");
+                var pages = book.HasPages || kind == BookKind.Guide ? "" : " Este formato no tiene números de página, así que el máster citará solo el libro.";
+                var what = kind == BookKind.Guide ? "Guía de dirección" : "Reglamento";
+                Say("Mesa", $"{what} «{book.Title}» cargado: {book.Passages.Count} pasajes.{pages}");
             }
             catch (FormatException e)
             {
@@ -979,6 +1044,14 @@ public partial class Main : Control
             while (_masterBusy) await ToSignal(GetTree().CreateTimer(0.1), SceneTreeTimer.SignalName.Timeout);
         }
         if (settings) OpenSettings();
+        if (OS.GetCmdlineUserArgs().Contains("--historia"))
+        {
+            _game.Story.NextScene("El peaje del puente");
+            _game.Story.SetFinalGoal("Recuperar la campana de la mina");
+            _game.Story.AddGoal("Cruzar el puente");
+            _game.Story.StartCountdown("Llegan refuerzos goblin", 5);
+            _game.Story.AdvanceCountdown("Llegan refuerzos goblin", 2);
+        }
         if (OS.GetCmdlineUserArgs().Contains("--combate"))
         {
             _table.SetSheetEntry("kael", "Fuerza", "16");

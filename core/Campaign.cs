@@ -4,7 +4,7 @@ namespace RoleDMFable.Core;
 
 public sealed record LogEntry(string Who, string Text);
 
-public sealed record CampaignSave(int Version, string Name, string CurrentScene, IReadOnlyList<SceneSpec> Scenes, IReadOnlyList<LogEntry>? Log = null);
+public sealed record CampaignSave(int Version, string Name, string CurrentScene, IReadOnlyList<SceneSpec> Scenes, IReadOnlyList<LogEntry>? Log = null, StorySave? Story = null);
 
 public sealed record TravelResult(string FromScene, string ToScene, string Label, IReadOnlyList<string> Travellers);
 
@@ -31,13 +31,18 @@ public sealed class Campaign
     public string Name { get; }
     public TableState Current { get; private set; }
     public IReadOnlyList<LogEntry> Log => _log;
+
+    /// <summary>El hilo de la historia: escenas, objetivos, cuentas atrás y oráculo.</summary>
+    public StoryState Story { get; }
     public IEnumerable<TableState> Scenes => _sceneOrder.Select(id => _scenes[id]);
 
     /// <summary>Algo cambió en la partida (una ficha, la niebla, el lugar o el registro).</summary>
     public event Action? Changed;
 
-    public Campaign(string name, IEnumerable<SceneSpec> scenes, string startScene, IEnumerable<LogEntry>? log = null)
+    public Campaign(string name, IEnumerable<SceneSpec> scenes, string startScene, IEnumerable<LogEntry>? log = null, StorySave? story = null)
     {
+        Story = new StoryState(story);
+        Story.Changed += () => Changed?.Invoke();
         Name = string.IsNullOrWhiteSpace(name) ? "Partida" : name;
         foreach (var spec in scenes)
         {
@@ -111,7 +116,7 @@ public sealed class Campaign
     }
 
     public string ToJson() => JsonSerializer.Serialize(
-        new CampaignSave(SaveVersion, Name, Current.SceneId, Scenes.Select(s => s.ToSpec()).ToList(), _log.ToList()),
+        new CampaignSave(SaveVersion, Name, Current.SceneId, Scenes.Select(s => s.ToSpec()).ToList(), _log.ToList(), Story.ToSave()),
         JsonOptions);
 
     public static Campaign FromJson(string json)
@@ -128,6 +133,6 @@ public sealed class Campaign
         if (save is null || save.Scenes is null) throw new FormatException("El archivo de la partida está vacío.");
         if (save.Version > SaveVersion)
             throw new FormatException("La partida se guardó con una versión más nueva del juego.");
-        return new Campaign(save.Name, save.Scenes, save.CurrentScene ?? "", save.Log);
+        return new Campaign(save.Name, save.Scenes, save.CurrentScene ?? "", save.Log, save.Story);
     }
 }
