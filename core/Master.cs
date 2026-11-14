@@ -65,6 +65,30 @@ public sealed class MasterToolbox
         new MasterTool("anotar_ficha",
             "Apunta o cambia un dato en la hoja de personaje de una ficha, por ejemplo «Fuerza» → «16» o «Espada larga» → «+6, daño 1d8+3». Con valor vacío borra el dato. Úsala al crear un personaje con su jugador y cuando un dato cambie.",
             """{"type":"object","properties":{"ficha":{"type":"string","description":"Id de la ficha"},"dato":{"type":"string","description":"Nombre del dato, como lo llama el reglamento"},"valor":{"type":"string","description":"Valor del dato. Vacío para borrarlo."}},"required":["ficha","dato","valor"]}"""),
+        new MasterTool("preguntar_oraculo",
+            "Pregunta de sí o no al azar sobre algo del mundo que nadie ha fijado todavía: si la puerta está vigilada, si el mercader conoce al ladrón, si llueve. Los dados responden «sí», «no», «sí, y además…» o «no, y además…», dan un grado (bajo, medio, alto) para el detalle que quieras y a veces traen un evento inesperado. Úsala en vez de decidir tú, y respeta la respuesta.",
+            """{"type":"object","properties":{"pregunta":{"type":"string","description":"La pregunta, formulada para responderse con sí o no"},"probabilidad":{"type":"string","enum":["muy_improbable","improbable","igual","probable","muy_probable"],"description":"Lo probable que es un sí según la lógica de la situación"},"detalle":{"type":"string","description":"Opcional: qué gradúa el dado de detalle si la respuesta es sí, por ejemplo «cantidad», «peligro», «calidad de la pista»"}},"required":["pregunta","probabilidad"]}"""),
+        new MasterTool("reaccion_pnj",
+            "Tira la primera impresión de un personaje no jugador ante el grupo: actitud, carácter y si es más o menos capaz que los héroes. Úsala cuando aparezca alguien cuya actitud no esté ya decidida por la historia.",
+            """{"type":"object","properties":{"pnj":{"type":"string","description":"Nombre o descripción breve del personaje"},"buen_trato":{"type":"string","enum":["muy_improbable","improbable","igual","probable","muy_probable"],"description":"Lo probable que es que reciba bien al grupo, según las circunstancias"}},"required":["pnj","buen_trato"]}"""),
+        new MasterTool("evento_inesperado",
+            "Mete un giro por decisión tuya cuando la escena se estanca o le falta chispa. Los dados dicen si es bueno o malo para el grupo, a qué afecta y cuándo ocurre; tú lo conviertes en ficción. Solo una vez por escena.",
+            """{"type":"object","properties":{"importante":{"type":"boolean","description":"true para un giro grande que cambia las cosas; false para uno normal"}},"required":["importante"]}"""),
+        new MasterTool("inspiracion",
+            "Devuelve un verbo y un nombre al azar para inspirarte cuando tengas que inventar algo y no sepas por dónde tirar (qué quiere un personaje, qué es un evento). Interprétalos con la primera idea que encaje.",
+            """{"type":"object","properties":{}}"""),
+        new MasterTool("nueva_escena",
+            "Cierra la escena actual y abre la siguiente. Úsala cuando cambie el lugar, pase un tiempo o termine lo que estaba ocurriendo (una conversación, una pelea, un registro).",
+            """{"type":"object","properties":{"titulo":{"type":"string","description":"Título corto de la escena que empieza"}},"required":["titulo"]}"""),
+        new MasterTool("anotar_historia",
+            "Apunta o tacha algo en el cuaderno de la historia, que se te enseña en cada turno: el objetivo final de la aventura, los objetivos en curso, aliados, enemigos y notas (pistas, promesas, cabos sueltos, cosas que los jugadores han dicho que quieren).",
+            """{"type":"object","properties":{"tipo":{"type":"string","enum":["objetivo_final","objetivo","aliado","enemigo","nota"]},"texto":{"type":"string","description":"Qué apuntar, en una frase corta. Para tachar, el texto o una parte que lo identifique."},"tachar":{"type":"boolean","description":"true para quitarlo porque se ha cumplido o ya no cuenta"}},"required":["tipo","texto"]}"""),
+        new MasterTool("cuenta_atras",
+            "Crea o avanza una cuenta atrás que los jugadores ven en pantalla: algo malo que ocurrirá cuando llegue a cero (el ritual termina, llegan los refuerzos, el puente se hunde). Acción «crear» con sus pasos, «avanzar» cuando pase el tiempo o el grupo falle, «quitar» cuando ya no cuente.",
+            """{"type":"object","properties":{"accion":{"type":"string","enum":["crear","avanzar","quitar"]},"nombre":{"type":"string","description":"Nombre corto y claro de lo que amenaza"},"pasos":{"type":"integer","description":"Al crear: de cuántos pasos consta (de 3 a 8 suele ir bien). Al avanzar: cuántos baja, por defecto 1."}},"required":["accion","nombre"]}"""),
+        new MasterTool("consultar_guia",
+            "Busca consejo en las guías de dirección que ha cargado el grupo (libros sobre cómo llevar partidas). Úsala cuando dudes de cómo llevar un momento: cómo dar miedo, cómo llevar una investigación o un viaje, cómo cerrar una sesión, cómo dar vida a un personaje. Devuelve pasajes para inspirarte; aplícalos sin citarlos a los jugadores.",
+            """{"type":"object","properties":{"consulta":{"type":"string","description":"Palabras clave de lo que necesitas"}},"required":["consulta"]}"""),
         new MasterTool("consultar_reglas",
             "Busca en los reglamentos que ha cargado el grupo y devuelve los pasajes que mejor encajan, con libro y página. Úsala antes de resolver algo que dependa de las reglas. Busca con las palabras que usaría el propio manual, por ejemplo «ataque de oportunidad» o «tirada de salvación de Reflejos». Si no sale lo que buscas, prueba con otras palabras.",
             """{"type":"object","properties":{"consulta":{"type":"string","description":"Palabras clave de la regla que buscas"}},"required":["consulta"]}"""),
@@ -82,6 +106,14 @@ public sealed class MasterToolbox
                 "cambiar_pv" => ChangeHp(input),
                 "medir_distancia" => Measure(input),
                 "consultar_reglas" => LookUp(input),
+                "preguntar_oraculo" => AskOracle(input),
+                "reaccion_pnj" => NpcReaction(input),
+                "evento_inesperado" => VoluntaryEvent(input),
+                "inspiracion" => Inspire(),
+                "nueva_escena" => NextScene(input),
+                "anotar_historia" => WriteStory(input),
+                "cuenta_atras" => Countdown(input),
+                "consultar_guia" => LookUpGuide(input),
                 "iniciar_combate" => StartCombat(input),
                 "siguiente_turno" => NextTurn(),
                 "terminar_combate" => EndCombat(),
@@ -165,6 +197,155 @@ public sealed class MasterToolbox
         return new ToolOutcome($"Entre {from.Name} y {to.Name} hay {feet} pies.");
     }
 
+    // ---------- Historia ----------
+
+    private ToolOutcome AskOracle(IReadOnlyDictionary<string, JsonElement> input)
+    {
+        var question = Text(input, "pregunta");
+        var likelihood = ParseLikelihood(Text(input, "probabilidad"));
+        var result = _game.Story.Ask(likelihood, _random);
+        var detail = OptionalText(input, "detalle");
+        var graded = result.Answer is OracleAnswer.Yes or OracleAnswer.YesAnd
+            ? detail is not null ? $" Grado de {detail}: {result.Degree}." : $" Grado del detalle, si lo necesitas: {result.Degree}."
+            : "";
+        return new ToolOutcome($"«{question}» → {result.AnswerText}.{graded}{DescribeEvent(result.Event)}");
+    }
+
+    private ToolOutcome NpcReaction(IReadOnlyDictionary<string, JsonElement> input)
+    {
+        var who = Text(input, "pnj");
+        var reaction = _game.Story.React(ParseLikelihood(Text(input, "buen_trato")), _random);
+        return new ToolOutcome(
+            $"{who}: actitud inicial {reaction.Attitude}; es una persona {reaction.Personality}; {reaction.Capability}. "
+            + $"Es solo el punto de partida: lo que hagan los héroes puede cambiarla.{DescribeEvent(reaction.Event)}");
+    }
+
+    private ToolOutcome VoluntaryEvent(IReadOnlyDictionary<string, JsonElement> input)
+    {
+        var major = input.TryGetValue("importante", out var flag) && flag.ValueKind == JsonValueKind.True;
+        var storyEvent = _game.Story.VoluntaryEvent(major, _random);
+        return storyEvent is null
+            ? Fail("Ya has metido un evento por tu cuenta en esta escena. Espera a la siguiente (nueva_escena) o deja que surja del oráculo.")
+            : new ToolOutcome(DescribeEvent(storyEvent).Trim());
+    }
+
+    private ToolOutcome Inspire()
+    {
+        var (verb, noun) = StoryState.Inspire(_random);
+        return new ToolOutcome($"Palabras: «{verb}» y «{noun}». Quédate con la primera idea que encaje en la situación.");
+    }
+
+    private ToolOutcome NextScene(IReadOnlyDictionary<string, JsonElement> input)
+    {
+        _game.Story.NextScene(Text(input, "titulo"));
+        return new ToolOutcome($"Empieza la escena {_game.Story.Scene}: {_game.Story.SceneTitle}. {DescribeArc()}");
+    }
+
+    private ToolOutcome WriteStory(IReadOnlyDictionary<string, JsonElement> input)
+    {
+        var kind = Text(input, "tipo");
+        var text = Text(input, "texto");
+        var remove = input.TryGetValue("tachar", out var flag) && flag.ValueKind == JsonValueKind.True;
+        var story = _game.Story;
+        bool done;
+        switch (kind)
+        {
+            case "objetivo_final":
+                story.SetFinalGoal(remove ? "" : text);
+                done = true;
+                break;
+            case "objetivo":
+                done = remove ? story.RemoveGoal(text) : story.AddGoal(text);
+                break;
+            case "aliado":
+                done = remove ? story.RemoveAlly(text) : story.AddAlly(text);
+                break;
+            case "enemigo":
+                done = remove ? story.RemoveEnemy(text) : story.AddEnemy(text);
+                break;
+            case "nota":
+                done = remove ? story.RemoveNote(text) : story.AddNote(text);
+                break;
+            default:
+                return Fail("El tipo tiene que ser objetivo_final, objetivo, aliado, enemigo o nota.");
+        }
+        if (!done) return Fail(remove ? $"No hay un apunte que coincida con «{text}», o coinciden varios. Usa su texto exacto." : "No se pudo apuntar.");
+        return new ToolOutcome(remove ? "Tachado." : "Apuntado.");
+    }
+
+    private ToolOutcome Countdown(IReadOnlyDictionary<string, JsonElement> input)
+    {
+        var action = Text(input, "accion");
+        var name = Text(input, "nombre");
+        var story = _game.Story;
+        switch (action)
+        {
+            case "crear":
+                var created = story.StartCountdown(name, input.ContainsKey("pasos") ? Int(input, "pasos") : 5);
+                if (created is null) return Fail($"No caben más cuentas atrás (máximo {StoryState.MaxCountdowns}). Quita alguna antes.");
+                Announced?.Invoke("Mesa", $"Cuenta atrás: {created.Name} ({created.Left} de {created.Total}).");
+                return new ToolOutcome($"Cuenta atrás «{created.Name}» en marcha: {created.Left} de {created.Total}. Los jugadores la ven.");
+            case "avanzar":
+                var advanced = story.AdvanceCountdown(name, input.ContainsKey("pasos") ? Int(input, "pasos") : 1);
+                if (advanced is null) return Fail(UnknownCountdown(name));
+                Announced?.Invoke("Mesa", advanced.Left == 0
+                    ? $"La cuenta atrás «{advanced.Name}» ha llegado a cero."
+                    : $"Cuenta atrás: {advanced.Name} ({advanced.Left} de {advanced.Total}).");
+                return new ToolOutcome(advanced.Left == 0
+                    ? $"«{advanced.Name}» ha llegado a cero: ocurre lo que amenazaba. Nárralo y quítala cuando ya no cuente."
+                    : $"«{advanced.Name}» baja a {advanced.Left} de {advanced.Total}. Narra cómo se nota.");
+            case "quitar":
+                return story.RemoveCountdown(name) ? new ToolOutcome("Cuenta atrás quitada.") : Fail(UnknownCountdown(name));
+            default:
+                return Fail("La acción tiene que ser crear, avanzar o quitar.");
+        }
+    }
+
+    private string UnknownCountdown(string name) => _game.Story.Countdowns.Count == 0
+        ? "No hay ninguna cuenta atrás en marcha."
+        : $"No hay una cuenta atrás llamada «{name}». En marcha: {string.Join(", ", _game.Story.Countdowns.Select(c => c.Name))}.";
+
+    private string DescribeEvent(StoryEvent? storyEvent)
+    {
+        if (storyEvent is null) return "";
+        var points = storyEvent.PointsGained > 0 ? $" (+{storyEvent.PointsGained} puntos de historia)" : "";
+        return $" {storyEvent.Describe()}{points} Intégralo en la ficción con la primera idea que encaje; si no se te ocurre, usa inspiracion. {DescribeArc()}";
+    }
+
+    private string DescribeArc() => MasterPrompt.DescribeArc(_game.Story);
+
+    private static Likelihood ParseLikelihood(string text) => text.Trim().ToLowerInvariant().Replace(' ', '_') switch
+    {
+        "muy_improbable" => Likelihood.VeryUnlikely,
+        "improbable" => Likelihood.Unlikely,
+        "probable" => Likelihood.Likely,
+        "muy_probable" => Likelihood.VeryLikely,
+        "igual" or "normal" or "50/50" => Likelihood.Even,
+        _ => throw new ArgumentException("La probabilidad tiene que ser muy_improbable, improbable, igual, probable o muy_probable."),
+    };
+
+    private ToolOutcome LookUpGuide(IReadOnlyDictionary<string, JsonElement> input)
+    {
+        var query = Text(input, "consulta");
+        if (Rules is null || !Rules.BooksOf(BookKind.Guide).Any())
+            return new ToolOutcome("No hay guías de dirección cargadas. Sigue los principios de dirección de tus instrucciones.");
+        var hits = Rules.Search(query, 3, BookKind.Guide);
+        if (hits.Count == 0) return new ToolOutcome($"Las guías no dicen nada sobre «{query}». Prueba con otras palabras o sigue tus principios de dirección.");
+        return new ToolOutcome(FormatHits(hits));
+    }
+
+    private static string FormatHits(IReadOnlyList<RuleHit> hits)
+    {
+        var builder = new StringBuilder();
+        foreach (var hit in hits)
+        {
+            builder.AppendLine($"[{hit.Source}]");
+            builder.AppendLine(hit.Text);
+            builder.AppendLine();
+        }
+        return builder.ToString().TrimEnd();
+    }
+
     private ToolOutcome StartCombat(IReadOnlyDictionary<string, JsonElement> input)
     {
         if (!input.TryGetValue("participantes", out var list) || list.ValueKind != JsonValueKind.Array || list.GetArrayLength() == 0)
@@ -244,21 +425,13 @@ public sealed class MasterToolbox
     private ToolOutcome LookUp(IReadOnlyDictionary<string, JsonElement> input)
     {
         var query = Text(input, "consulta");
-        if (Rules is null || Rules.Books.Count == 0)
+        if (Rules is null || !Rules.BooksOf(BookKind.Rules).Any())
             return new ToolOutcome("No hay ningún reglamento cargado. Resuelve con la regla sencilla de 1d20 contra dificultad.");
 
         var hits = Rules.Search(query);
-        if (hits.Count == 0)
-            return new ToolOutcome($"No se ha encontrado nada sobre «{query}» en los reglamentos. Prueba con otras palabras o resuelve con sentido común.");
-
-        var builder = new StringBuilder();
-        foreach (var hit in hits)
-        {
-            builder.AppendLine($"[{hit.Source}]");
-            builder.AppendLine(hit.Text);
-            builder.AppendLine();
-        }
-        return new ToolOutcome(builder.ToString().TrimEnd());
+        return hits.Count == 0
+            ? new ToolOutcome($"No se ha encontrado nada sobre «{query}» en los reglamentos. Prueba con otras palabras o resuelve con sentido común.")
+            : new ToolOutcome(FormatHits(hits));
     }
 
     /// <summary>Busca por id y, si no, por nombre sin distinguir mayúsculas (solo si es único).</summary>
@@ -331,6 +504,36 @@ public static class MasterPrompt
         - Si habla un jugador al que no le toca, respóndele brevemente sin gastar el turno de nadie.
         - Las criaturas con 0 PV quedan fuera de combate y se saltan solas. Cuando un bando ya no pueda o no quiera luchar, usa terminar_combate.
 
+        Cómo dirigir
+        Tu trabajo no es contar tu historia, sino que la mesa lo pase bien y sienta que la historia es suya.
+        - Intervenciones cortas. Da dos o tres pinceladas y devuelve la palabra: los héroes son el centro. Alarga solo en los momentos que lo merecen.
+        - Tres posturas, y cámbialas a menudo: aliado (celebras las ideas del grupo y se lo pones a favor), neutral (aplicas las reglas tal cual) y enemigo (aprietas, complicas, amenazas lo que quieren). Una escena buena suele pasar por las tres.
+        - Tres ingredientes que compiten: color (descripción que mete en el lugar), progreso (que pasen cosas) y emoción (lo que sienten y lo que les une). Fíjate en lo que piden los jugadores con su forma de jugar: si preguntan por detalles, dales color; si se impacientan, progreso; si hablan entre ellos en personaje, déjales y no interrumpas.
+        - Los jugadores también son autores. Pregúntales cosas que solo ellos pueden decidir: cómo es ese objeto suyo, qué siente su personaje al ver esto, de qué conoce a ese tipo. Cuando un héroe tenga un éxito claro, invita a su jugador a contar cómo lo hace. Lo que inventen pasa a ser verdad.
+        - Escucha, apunta y reutiliza. Lo que los jugadores teman, deseen o sospechen en voz alta es material mejor que el tuyo: apúntalo con anotar_historia y hazlo volver más adelante. Las escenas tranquilas (una hoguera, una comida) son valiosas: déjalas respirar y escucha.
+        - Premia el ingenio. Si proponen una solución que no habías previsto y tiene sentido, funciona, y mejor que la tuya. Si las reglas no contemplan lo que intentan, decide tú algo justo en vez de decir que no se puede.
+        - Antes de un riesgo importante, di claro qué se gana y qué se pierde. Así el jugador decide con conocimiento y la tirada importa.
+        - Un fallo nunca es un ridículo ni un «no pasa nada». Fallar cambia la situación: el rival resulta ser mejor de lo que parecía, algo del entorno se tuerce, cuesta tiempo o recursos, o se consigue a un precio.
+        - No todo es épico. Guarda las palabras grandes para los momentos grandes; lo épico funciona por contraste con lo normal.
+        - Dilemas mejor que obstáculos. De vez en cuando plantea una elección en la que las dos salidas cuestan algo y ninguna es la correcta.
+        - Los personajes no jugadores quieren algo y tienen un porqué. Con un nombre, un deseo y un detalle basta. Usa reaccion_pnj para su primera actitud si no está decidida.
+        - Los combates se mueven. Que los golpes rompan cosas, que el terreno cuente (el agua, el puente, las rocas), que los enemigos cambien de posición, huyan o se rindan en vez de pegarse quietos hasta caer.
+        - Salta lo que no aporta. Viajes sin incidentes, pasillos vacíos y trámites se resumen en una frase. No repitas lo que los jugadores acaban de decir que hacen: da el resultado.
+        - Si una escena ya no da más de sí, dilo sin rodeos («aquí no hay nada más que sacar») o haz que algo irrumpa. No dejes que el grupo dé vueltas en vacío.
+        - La trama no persigue a los héroes. Si se van por otro lado, el mundo sigue su curso y lo que dejaron atrás tiene consecuencias. Para atraerlos, dales motivos y ganchos, no muros.
+        - El tiempo aprieta. Cuando haya una amenaza que avanza, hazla visible con cuenta_atras y bájala cuando pierdan tiempo o fallen.
+        - Si un héroe está a punto de morir, que no sea por una tirada tonta en un momento sin importancia. Y si muere, dale a su jugador una última escena digna.
+        - Reparte el foco. Si un jugador lleva rato callado, dirígete a su personaje. No favorezcas siempre al que más habla.
+        - Para cerrar una sesión o una escena fuerte, corta en alto: una revelación, una puerta que se abre, una pregunta sin responder.
+
+        El azar también dirige
+        - Tú no decides todo. Cuando un jugador pregunte por algo del mundo que no está fijado por el mapa, por lo ya establecido ni por las reglas, no lo inventes a tu gusto: usa preguntar_oraculo con la probabilidad que dicte la lógica y respeta lo que salga, también cuando estropee tus planes. Así la historia os sorprende a todos.
+        - No preguntes al oráculo lo que ya se sabe ni lo que debe decidir un jugador.
+        - Los eventos inesperados que traigan los dados no se ignoran: conviértelos en algo concreto de la ficción cuanto antes. Si no se te ocurre cómo, usa inspiracion.
+        - Lleva la cuenta de la historia: abre escena con nueva_escena cuando cambie el lugar o el asunto, y mantén al día objetivos, aliados, enemigos y notas con anotar_historia.
+        - Los puntos de historia marcan el ritmo de la aventura. Antes del punto de giro, abre y complica. Después, cierra: nada de tramas nuevas, todo conduce al desenlace.
+        - Si hay guías de dirección cargadas y dudas de cómo llevar un tipo de escena (miedo, investigación, viaje, batalla, cierre), usa consultar_guia. Es consejo para ti, no para leérselo a los jugadores.
+
         Cómo narrar
         - Solo los jugadores deciden lo que piensan, dicen y hacen sus héroes. Tú describes el mundo y las consecuencias, y te detienes cuando toca decidir a un jugador.
         - Respuestas breves: de dos a cinco frases en lo normal, algo más en un momento importante. Prosa en segunda persona, sin listas, sin encabezados y sin formato.
@@ -347,9 +550,14 @@ public static class MasterPrompt
         builder.AppendLine(DescribeTable(game.Current));
         builder.AppendLine();
 
-        builder.AppendLine(rules is { Books.Count: > 0 }
-            ? $"REGLAMENTOS CARGADOS: {string.Join("; ", rules.Books.Select(b => b.Title))}."
-            : "REGLAMENTOS CARGADOS: ninguno.");
+        builder.AppendLine("HISTORIA");
+        builder.AppendLine(DescribeStory(game.Story));
+        builder.AppendLine();
+
+        var ruleBooks = rules?.BooksOf(BookKind.Rules).Select(b => b.Title).ToList() ?? new List<string>();
+        var guides = rules?.BooksOf(BookKind.Guide).Select(b => b.Title).ToList() ?? new List<string>();
+        builder.AppendLine(ruleBooks.Count > 0 ? $"REGLAMENTOS CARGADOS: {string.Join("; ", ruleBooks)}." : "REGLAMENTOS CARGADOS: ninguno.");
+        builder.AppendLine(guides.Count > 0 ? $"GUÍAS DE DIRECCIÓN CARGADAS: {string.Join("; ", guides)}." : "GUÍAS DE DIRECCIÓN CARGADAS: ninguna.");
         builder.AppendLine();
 
         // Lo que acaba de decir el jugador suele estar ya apuntado en el registro: no se repite.
@@ -365,6 +573,36 @@ public static class MasterPrompt
         builder.AppendLine("AHORA");
         builder.Append($"{speaker} dice: {text}");
         return builder.ToString();
+    }
+
+    /// <summary>En qué punto del arco está la aventura y qué le toca hacer al máster con ello.</summary>
+    public static string DescribeArc(StoryState story) => story.PastTurningPoint
+        ? $"Puntos de historia: {story.Points} de {story.TurningPoint}. Punto de giro alcanzado: la aventura va ya hacia su desenlace. No abras tramas nuevas; lo que aparezca confirma o resuelve lo que hay, y lleva al grupo al enfrentamiento o la decisión final."
+        : $"Puntos de historia: {story.Points} de {story.TurningPoint}. Todavía en el planteamiento y el nudo: abre preguntas, presenta personajes y complica las cosas.";
+
+    public static string DescribeStory(StoryState story)
+    {
+        var builder = new StringBuilder();
+        var title = story.SceneTitle.Length > 0 ? $": {story.SceneTitle}" : "";
+        builder.AppendLine($"Escena {story.Scene}{title}. {DescribeArc(story)}");
+        builder.AppendLine(story.EventUsedThisScene
+            ? "Ya has usado tu evento voluntario en esta escena."
+            : "Tienes disponible un evento voluntario en esta escena.");
+        builder.AppendLine(story.FinalGoal.Length > 0
+            ? $"Objetivo final: {story.FinalGoal}"
+            : "Objetivo final: sin fijar. Averigua pronto qué quiere el grupo o dales un gancho, y apúntalo.");
+        AppendList(builder, "Objetivos en curso", story.Goals);
+        AppendList(builder, "Aliados", story.Allies);
+        AppendList(builder, "Enemigos", story.Enemies);
+        AppendList(builder, "Notas", story.Notes);
+        foreach (var countdown in story.Countdowns)
+            builder.AppendLine($"Cuenta atrás «{countdown.Name}»: quedan {countdown.Left} de {countdown.Total}.");
+        return builder.ToString().TrimEnd();
+    }
+
+    private static void AppendList(StringBuilder builder, string label, IReadOnlyList<string> items)
+    {
+        if (items.Count > 0) builder.AppendLine($"{label}: {string.Join("; ", items)}.");
     }
 
     public static string DescribeTable(TableState table)

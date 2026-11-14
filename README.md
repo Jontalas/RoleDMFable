@@ -3,13 +3,15 @@
 Mesa de rol virtual en 2D, con estética de dibujo animado, en la que una IA hará de máster.
 El diseño completo está en el documento del proyecto; este repositorio contiene el juego.
 
-![Un combate por turnos en la mesa](docs/captura-combate.png)
+![La mesa con la historia, una cuenta atrás y un combate](docs/captura-historia.png)
 
 ## Estado: fase 1 en marcha (el máster IA ya responde)
 
 Lo que ya funciona, en un solo PC:
 
 - Máster IA: lo que escribes en el chat lo lee Claude, que narra y actúa sobre la mesa con herramientas (tirar dados, mover fichas, daño y curación, medir distancias). El máster no inventa números: las tiradas y los cambios los hace el juego.
+- Dirección de la historia: el máster lleva un cuaderno con escenas numeradas, objetivo final, objetivos en curso, aliados, enemigos y notas, que se ve en el panel «La historia». Cuando algo del mundo no está decidido no lo inventa a su gusto: pregunta a un oráculo de dados (sí, no, «sí, y además…», «no, y además…»), que a veces trae eventos inesperados. Esos eventos dan puntos de historia y, al llegar al punto de giro, la aventura deja de abrir tramas y va hacia su desenlace. Las amenazas que avanzan se muestran como cuentas atrás.
+- Guías de dirección: además de reglamentos puedes cargar libros de consejos para dirigir partidas. No son reglas; el máster los consulta para decidir cómo llevar una escena. Sus instrucciones ya incluyen principios generales de buena dirección (intervenciones cortas, dar autoría a los jugadores, fallos interesantes, dilemas, ritmo).
 - Combate por turnos: el máster tira la iniciativa de todos y la barra de arriba del mapa muestra la ronda, el orden y a quién le toca. Los caídos se saltan solos y el botón «Pasar turno» termina el turno actual.
 - Hojas de personaje: cada ficha tiene una hoja de datos libres («Fuerza: 16», «Espada larga: +6, daño 1d8+3») que vale para cualquier reglamento. Se edita con «Ficha de …» y el máster la lee y también puede apuntar datos, por ejemplo al crear un personaje contigo.
 - Reglamentos: con el botón «Reglamentos» (o arrastrando los archivos a la ventana) se cargan manuales en PDF, Word (.docx) o TXT. El juego los lee una vez, los guarda troceados en tu PC y el máster busca en ellos la regla que necesita, citando libro y página. Sin reglamentos, resuelve con una regla sencilla de 1d20 contra dificultad.

@@ -26,7 +26,15 @@ public sealed record RuleHit(string Book, RulePassage Passage, double Score)
     public string Source => Passage.PageLabel.Length > 0 ? $"{Book}, {Passage.PageLabel}" : Book;
 }
 
-/// <summary>Un reglamento ya leído y troceado en pasajes.</summary>
+/// <summary>Para qué sirve un libro: reglas del juego o consejos para dirigir la partida.</summary>
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<BookKind>))]
+public enum BookKind
+{
+    Rules,
+    Guide,
+}
+
+/// <summary>Un reglamento o una guía ya leídos y troceados en pasajes.</summary>
 public sealed class Rulebook
 {
     public const int SaveVersion = 1;
@@ -40,10 +48,12 @@ public sealed class Rulebook
     public string Title { get; }
     public string FileName { get; }
     public IReadOnlyList<RulePassage> Passages { get; }
+    public BookKind Kind { get; }
     public bool HasPages => Passages.Any(p => p.Page is not null);
 
-    public Rulebook(string id, string title, string fileName, IReadOnlyList<RulePassage> passages)
+    public Rulebook(string id, string title, string fileName, IReadOnlyList<RulePassage> passages, BookKind kind = BookKind.Rules)
     {
+        Kind = kind;
         Id = id;
         Title = title;
         FileName = fileName;
@@ -51,7 +61,7 @@ public sealed class Rulebook
     }
 
     /// <summary>Trocea las páginas en pasajes. Lanza <see cref="FormatException"/> si no hay texto.</summary>
-    public static Rulebook FromPages(string title, string fileName, IEnumerable<RulePage> pages)
+    public static Rulebook FromPages(string title, string fileName, IEnumerable<RulePage> pages, BookKind kind = BookKind.Rules)
     {
         var passages = new List<RulePassage>();
         var words = new List<string>();
@@ -85,10 +95,10 @@ public sealed class Rulebook
 
         if (passages.Count == 0) throw new FormatException("El archivo no contiene texto que se pueda leer.");
         // El id sale del nombre del archivo: volver a cargar el mismo archivo lo sustituye.
-        return new Rulebook(MakeId(fileName.Length > 0 ? fileName : title), title, fileName, passages);
+        return new Rulebook(MakeId(fileName.Length > 0 ? fileName : title), title, fileName, passages, kind);
     }
 
-    public string ToJson() => JsonSerializer.Serialize(new Save(SaveVersion, Id, Title, FileName, Passages), Json);
+    public string ToJson() => JsonSerializer.Serialize(new Save(SaveVersion, Id, Title, FileName, Passages, Kind), Json);
 
     public static Rulebook FromJson(string json)
     {
@@ -103,10 +113,10 @@ public sealed class Rulebook
         }
         if (save is null || save.Version != SaveVersion || string.IsNullOrEmpty(save.Id) || save.Passages is null || save.Passages.Count == 0)
             throw new FormatException("El reglamento guardado está dañado o es de otra versión.");
-        return new Rulebook(save.Id, save.Title ?? save.Id, save.FileName ?? "", save.Passages);
+        return new Rulebook(save.Id, save.Title ?? save.Id, save.FileName ?? "", save.Passages, save.Kind);
     }
 
-    private sealed record Save(int Version, string Id, string? Title, string? FileName, IReadOnlyList<RulePassage>? Passages);
+    private sealed record Save(int Version, string Id, string? Title, string? FileName, IReadOnlyList<RulePassage>? Passages, BookKind Kind = BookKind.Rules);
 
     private static IEnumerable<string> SplitParagraphs(string text)
     {
@@ -166,7 +176,9 @@ public sealed class RulesLibrary
         return true;
     }
 
-    public IReadOnlyList<RuleHit> Search(string query, int max = 4)
+    public IEnumerable<Rulebook> BooksOf(BookKind kind) => _books.Where(b => b.Kind == kind);
+
+    public IReadOnlyList<RuleHit> Search(string query, int max = 4, BookKind kind = BookKind.Rules)
     {
         var terms = RulesText.Terms(query).Distinct().ToList();
         if (terms.Count == 0 || _entries.Count == 0) return Array.Empty<RuleHit>();
@@ -174,6 +186,7 @@ public sealed class RulesLibrary
         var hits = new List<RuleHit>();
         foreach (var entry in _entries)
         {
+            if (entry.Book.Kind != kind) continue;
             double score = 0;
             foreach (var term in terms)
             {
