@@ -87,19 +87,86 @@ public sealed class Campaign
     /// </summary>
     public TravelResult? TryTravel(string tokenId)
     {
-        var from = Current;
-        var token = from.FindToken(tokenId);
+        var token = Current.FindToken(tokenId);
         if (token is null || token.Kind != TokenKind.Hero) return null;
-        var exit = from.ExitAt(token.X, token.Y);
-        if (exit is null) return null;
+        var exit = Current.ExitAt(token.X, token.Y);
+        return exit is null ? null : MoveParty(exit.To, exit.ToX, exit.ToY, exit.Label, token);
+    }
 
-        var to = _scenes[exit.To];
+    public const int MaxScenes = 80;
+
+    public TableState? FindScene(string idOrName)
+    {
+        if (_scenes.TryGetValue(idOrName, out var byId)) return byId;
+        var matches = _scenes.Values.Where(s => string.Equals(s.SceneName, idOrName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(s.SceneId, idOrName, StringComparison.OrdinalIgnoreCase)).ToList();
+        return matches.Count == 1 ? matches[0] : null;
+    }
+
+    /// <summary>Un id libre para un lugar nuevo, sacado de su nombre: «Cueva del oso» → cueva_del_oso.</summary>
+    public string NewSceneId(string name)
+    {
+        var slug = new string(RulesText.Fold(name).Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray()).Trim('_');
+        while (slug.Contains("__")) slug = slug.Replace("__", "_");
+        if (slug.Length == 0) slug = "lugar";
+        if (slug.Length > 40) slug = slug[..40].Trim('_');
+        var id = slug;
+        for (var n = 2; _scenes.ContainsKey(id); n++) id = $"{slug}_{n}";
+        return id;
+    }
+
+    /// <summary>
+    /// Añade un lugar nuevo a la partida. Lanza <see cref="FormatException"/> si el id está repetido,
+    /// alguna salida lleva a un lugar que no existe o ya no caben más lugares.
+    /// </summary>
+    public TableState AddScene(SceneSpec spec)
+    {
+        if (_scenes.Count >= MaxScenes) throw new FormatException($"La partida ya tiene {MaxScenes} lugares, que es el máximo.");
+        if (_scenes.ContainsKey(spec.Id)) throw new FormatException($"El lugar «{spec.Id}» está repetido.");
+        var table = new TableState(spec);
+        foreach (var exit in table.Exits)
+        {
+            if (!_scenes.TryGetValue(exit.To, out var target))
+                throw new FormatException($"«{table.SceneName}» tiene una salida hacia «{exit.To}», que no existe.");
+            if (!target.InBounds(exit.ToX, exit.ToY))
+                throw new FormatException($"La salida de «{table.SceneName}» llega fuera del mapa de «{target.SceneName}».");
+        }
+        if (table.Tokens.Any(t => t.Kind == TokenKind.Hero && _scenes.Values.Any(s => s.FindToken(t.Id) is not null)))
+            throw new FormatException("Un héroe no puede estar en dos lugares.");
+        _scenes.Add(table.SceneId, table);
+        _sceneOrder.Add(table.SceneId);
+        table.Changed += () => Changed?.Invoke();
+        Changed?.Invoke();
+        return table;
+    }
+
+    /// <summary>Abre una salida en un lugar hacia otro que ya existe.</summary>
+    public void AddExit(string sceneId, ExitSpec exit)
+    {
+        var from = _scenes[sceneId];
+        if (!_scenes.TryGetValue(exit.To, out var target)) throw new FormatException($"El lugar «{exit.To}» no existe.");
+        if (!from.InBounds(exit.X, exit.Y) || !from.InBounds(exit.X + exit.W - 1, exit.Y + exit.H - 1))
+            throw new FormatException($"La salida está fuera del mapa de «{from.SceneName}».");
+        if (!target.InBounds(exit.ToX, exit.ToY)) throw new FormatException($"La salida llega fuera del mapa de «{target.SceneName}».");
+        from.AddExit(exit);
+    }
+
+    /// <summary>
+    /// Lleva a todos los héroes del lugar actual a otro, junto a la casilla indicada.
+    /// Devuelve null si el lugar no existe, es el actual o el grupo no cabe.
+    /// </summary>
+    public TravelResult? MoveParty(string sceneId, int x, int y, string label = "", Token? first = null)
+    {
+        var from = Current;
+        if (!_scenes.TryGetValue(sceneId, out var to) || to == from) return null;
         var party = from.Tokens.Where(t => t.Kind == TokenKind.Hero).ToList();
-        // Primero quien cruza, para que se quede con la casilla de llegada.
-        party.Remove(token);
-        party.Insert(0, token);
+        if (first is not null && party.Remove(first))
+        {
+            // Primero quien cruza, para que se quede con la casilla de llegada.
+            party.Insert(0, first);
+        }
 
-        var cells = to.FreeCellsNear(exit.ToX, exit.ToY, party.Count);
+        var cells = to.FreeCellsNear(x, y, party.Count);
         if (cells.Count < party.Count) return null;
 
         // El grupo se va: el combate que hubiera en este lugar se da por terminado.
@@ -112,7 +179,7 @@ public sealed class Campaign
         Current = to;
         from.NotifyChanged();
         to.NotifyChanged();
-        return new TravelResult(from.SceneName, to.SceneName, exit.Label, party.Select(t => t.Name).ToList());
+        return new TravelResult(from.SceneName, to.SceneName, label, party.Select(t => t.Name).ToList());
     }
 
     public string ToJson() => JsonSerializer.Serialize(
