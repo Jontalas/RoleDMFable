@@ -14,6 +14,29 @@ public sealed class Token
     public string Role { get; init; } = "";
     /// <summary>Asiento local que lo controla, o null si lo lleva el máster u otro PC.</summary>
     public int? Seat { get; init; }
+
+    internal List<SheetEntry> SheetEntries { get; } = new();
+
+    /// <summary>Hoja de personaje: datos libres, para que valga con cualquier reglamento.</summary>
+    public IReadOnlyList<SheetEntry> Sheet => SheetEntries;
+}
+
+/// <summary>Un combate en marcha. Solo <see cref="TableState"/> lo cambia.</summary>
+public sealed class CombatState
+{
+    internal CombatState(IReadOnlyList<CombatantSpec> order, int round, int turn)
+    {
+        Order = order;
+        Round = round;
+        Turn = turn;
+    }
+
+    /// <summary>De mayor a menor iniciativa.</summary>
+    public IReadOnlyList<CombatantSpec> Order { get; }
+    public int Round { get; internal set; }
+    /// <summary>Posición en <see cref="Order"/> de quien tiene el turno.</summary>
+    public int Turn { get; internal set; }
+    public string CurrentTokenId => Order[Turn].Token;
 }
 
 public enum MoveError
@@ -59,6 +82,16 @@ public sealed class TableState
     public IReadOnlyList<Token> Tokens => _order;
     public IReadOnlyList<ExitSpec> Exits { get; }
 
+    public const int MaxSheetEntries = 60;
+    public const int MaxSheetNameLength = 40;
+    public const int MaxSheetValueLength = 200;
+
+    /// <summary>El combate en marcha, o null si no hay.</summary>
+    public CombatState? Combat { get; private set; }
+
+    /// <summary>La ficha que tiene el turno, o null si no hay combate.</summary>
+    public Token? TurnToken => Combat is null ? null : FindToken(Combat.CurrentTokenId);
+
     /// <summary>Casillas a la redonda que un héroe deja exploradas al pasar.</summary>
     public const int SightCells = 4;
 
@@ -95,12 +128,148 @@ public sealed class TableState
                 Hp = Math.Clamp(t.Hp, 0, Math.Max(t.MaxHp, 0)), MaxHp = Math.Max(t.MaxHp, 0),
                 Color = t.Color, Icon = t.Icon, Role = t.Role, Seat = t.Seat,
             };
+            foreach (var entry in t.Sheet ?? Array.Empty<SheetEntry>())
+                if (CleanEntry(entry.Name, entry.Value) is { } clean && token.SheetEntries.Count < MaxSheetEntries)
+                    token.SheetEntries.Add(clean);
             _tokens.Add(token.Id, token);
             _order.Add(token);
         }
 
         foreach (var hero in _order.Where(t => t.Kind == TokenKind.Hero))
             RevealAround(hero.X, hero.Y, notify: false);
+
+        // Un combate guardado solo se retoma si sus participantes siguen aquí.
+        if (spec.Combat is { Order.Count: > 0 } combat)
+        {
+            var order = combat.Order.Where(c => _tokens.ContainsKey(c.Token)).ToList();
+            if (order.Count > 0)
+                Combat = new CombatState(order, Math.Max(1, combat.Round), Math.Clamp(combat.Turn, 0, order.Count - 1));
+        }
+    }
+
+    // ---------- Combate ----------
+
+    /// <summary>
+    /// Empieza un combate con las iniciativas ya tiradas. Ordena de mayor a menor; en los empates
+    /// se respeta el orden en que llegan. Lanza <see cref="ArgumentException"/> si algo no cuadra.
+    /// </summary>
+    public CombatState StartCombat(IEnumerable<CombatantSpec> combatants)
+    {
+        var list = combatants.ToList();
+        if (list.Count == 0) throw new ArgumentException("Un combate necesita al menos un participante.");
+        foreach (var combatant in list)
+            if (!_tokens.ContainsKey(combatant.Token)) throw new ArgumentException($"No existe la ficha «{combatant.Token}».");
+        if (list.Select(c => c.Token).Distinct().Count() != list.Count)
+            throw new ArgumentException("Hay una ficha repetida entre los participantes.");
+
+        var order = list.OrderByDescending(c => c.Initiative).ToList();
+        Combat = new CombatState(order, 1, 0);
+        if (!CanAct(Combat.CurrentTokenId)) Advance();
+        Changed?.Invoke();
+        return Combat;
+    }
+
+    /// <summary>
+    /// Pasa el turno al siguiente que siga en pie; al dar la vuelta empieza otra ronda.
+    /// Devuelve a quién le toca, o null si no hay combate o no queda nadie en pie.
+    /// </summary>
+    public Token? NextTurn()
+    {
+        if (Combat is null) return null;
+        var moved = Advance();
+        Changed?.Invoke();
+        return moved ? TurnToken : null;
+    }
+
+    public bool EndCombat()
+    {
+        if (Combat is null) return false;
+        Combat = null;
+        Changed?.Invoke();
+        return true;
+    }
+
+    private bool CanAct(string tokenId) => FindToken(tokenId) is { Hp: > 0 };
+
+    private bool Advance()
+    {
+        var combat = Combat!;
+        for (var step = 0; step < combat.Order.Count; step++)
+        {
+            combat.Turn++;
+            if (combat.Turn >= combat.Order.Count)
+            {
+                combat.Turn = 0;
+                combat.Round++;
+            }
+            if (CanAct(combat.CurrentTokenId)) return true;
+        }
+        return false;
+    }
+
+    // ---------- Hojas de personaje ----------
+
+    /// <summary>
+    /// Apunta un dato en la hoja de una ficha. Si el dato ya existe (sin distinguir mayúsculas) lo cambia;
+    /// con valor vacío lo borra. Devuelve false si la hoja está llena o el nombre no vale.
+    /// </summary>
+    public bool SetSheetEntry(string tokenId, string name, string value)
+    {
+        var token = FindToken(tokenId) ?? throw new ArgumentException($"No existe la ficha «{tokenId}».", nameof(tokenId));
+        var cleanName = Clean(name, MaxSheetNameLength);
+        if (cleanName.Length == 0) return false;
+        var index = token.SheetEntries.FindIndex(e => string.Equals(e.Name, cleanName, StringComparison.OrdinalIgnoreCase));
+        var clean = CleanEntry(name, value);
+        if (clean is null)
+        {
+            if (index < 0) return true;
+            token.SheetEntries.RemoveAt(index);
+        }
+        else if (index >= 0)
+        {
+            // Se conserva el nombre tal como se apuntó la primera vez.
+            clean = clean with { Name = token.SheetEntries[index].Name };
+            if (token.SheetEntries[index] == clean) return true;
+            token.SheetEntries[index] = clean;
+        }
+        else
+        {
+            if (token.SheetEntries.Count >= MaxSheetEntries) return false;
+            token.SheetEntries.Add(clean);
+        }
+        Changed?.Invoke();
+        return true;
+    }
+
+    /// <summary>Sustituye la hoja entera, por ejemplo al editarla a mano. Las líneas que no valen se descartan.</summary>
+    public void ReplaceSheet(string tokenId, IEnumerable<SheetEntry> entries)
+    {
+        var token = FindToken(tokenId) ?? throw new ArgumentException($"No existe la ficha «{tokenId}».", nameof(tokenId));
+        var fresh = new List<SheetEntry>();
+        foreach (var entry in entries)
+        {
+            if (CleanEntry(entry.Name, entry.Value) is not { } clean || fresh.Count >= MaxSheetEntries) continue;
+            var index = fresh.FindIndex(e => string.Equals(e.Name, clean.Name, StringComparison.OrdinalIgnoreCase));
+            if (index >= 0) fresh[index] = clean;
+            else fresh.Add(clean);
+        }
+        if (fresh.SequenceEqual(token.SheetEntries)) return;
+        token.SheetEntries.Clear();
+        token.SheetEntries.AddRange(fresh);
+        Changed?.Invoke();
+    }
+
+    private static SheetEntry? CleanEntry(string? name, string? value)
+    {
+        var cleanName = Clean(name, MaxSheetNameLength);
+        var cleanValue = Clean(value, MaxSheetValueLength);
+        return cleanName.Length == 0 || cleanValue.Length == 0 ? null : new SheetEntry(cleanName, cleanValue);
+    }
+
+    private static string Clean(string? text, int max)
+    {
+        var clean = string.Join(' ', (text ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return clean.Length > max ? clean[..max] : clean;
     }
 
     /// <summary>La mesa tal como está ahora, lista para guardarse y volver a cargarse.</summary>
@@ -132,8 +301,10 @@ public sealed class TableState
                 x = end + 1;
             }
         }
-        var tokens = _order.Select(t => new TokenSpec(t.Id, t.Name, t.Kind, t.X, t.Y, t.Hp, t.MaxHp, t.Color, t.Icon, t.Role, t.Seat)).ToList();
-        return new SceneSpec(SceneId, SceneName, Width, Height, CellFeet, Terrain.Floor, features, tokens, unexplored, Exits);
+        var tokens = _order.Select(t => new TokenSpec(t.Id, t.Name, t.Kind, t.X, t.Y, t.Hp, t.MaxHp, t.Color, t.Icon, t.Role, t.Seat,
+            t.SheetEntries.Count > 0 ? t.SheetEntries.ToList() : null)).ToList();
+        var combat = Combat is null ? null : new CombatSpec(Combat.Round, Combat.Turn, Combat.Order);
+        return new SceneSpec(SceneId, SceneName, Width, Height, CellFeet, Terrain.Floor, features, tokens, unexplored, Exits, combat);
     }
 
     public ExitSpec? ExitAt(int x, int y) =>

@@ -3,13 +3,15 @@
 Mesa de rol virtual en 2D, con estética de dibujo animado, en la que una IA hará de máster.
 El diseño completo está en el documento del proyecto; este repositorio contiene el juego.
 
-![El máster responde en la mesa](docs/captura-master.png)
+![Un combate por turnos en la mesa](docs/captura-combate.png)
 
 ## Estado: fase 1 en marcha (el máster IA ya responde)
 
 Lo que ya funciona, en un solo PC:
 
 - Máster IA: lo que escribes en el chat lo lee Claude, que narra y actúa sobre la mesa con herramientas (tirar dados, mover fichas, daño y curación, medir distancias). El máster no inventa números: las tiradas y los cambios los hace el juego.
+- Combate por turnos: el máster tira la iniciativa de todos y la barra de arriba del mapa muestra la ronda, el orden y a quién le toca. Los caídos se saltan solos y el botón «Pasar turno» termina el turno actual.
+- Hojas de personaje: cada ficha tiene una hoja de datos libres («Fuerza: 16», «Espada larga: +6, daño 1d8+3») que vale para cualquier reglamento. Se edita con «Ficha de …» y el máster la lee y también puede apuntar datos, por ejemplo al crear un personaje contigo.
 - Reglamentos: con el botón «Reglamentos» (o arrastrando los archivos a la ventana) se cargan manuales en PDF, Word (.docx) o TXT. El juego los lee una vez, los guarda troceados en tu PC y el máster busca en ellos la regla que necesita, citando libro y página. Sin reglamentos, resuelve con una regla sencilla de 1d20 contra dificultad.
 - Exploración fuera de combate: los lugares están enlazados por salidas doradas. Cuando un héroe pisa una, el grupo entero pasa al siguiente mapa, y la niebla se despeja a medida que los héroes avanzan.
 - Guardado automático: la partida (lugares, figuritas, niebla y registro) se guarda sola y se retoma al volver a abrir el juego. El botón «Nueva partida» empieza de cero.
@@ -21,7 +23,7 @@ Lo que ya funciona, en un solo PC:
 
 La partida se guarda en la carpeta de datos del juego (`%APPDATA%\\Godot\\app_userdata\\RoleDMFable\\partida.json` en Windows).
 
-Lo siguiente: combate por turnos y hojas de personaje.
+Lo siguiente: gráficos definitivos con aspecto 3D, plantillas de área, sonido y partidas en red.
 
 Los PDF escaneados (fotos de las páginas, sin texto seleccionable) no se pueden leer. Los reglamentos no salen de tu PC salvo los pasajes sueltos que el máster consulta, que se envían a Claude como parte de la conversación.
 

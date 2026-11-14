@@ -97,6 +97,8 @@ public sealed class Campaign
         var cells = to.FreeCellsNear(exit.ToX, exit.ToY, party.Count);
         if (cells.Count < party.Count) return null;
 
+        // El grupo se va: el combate que hubiera en este lugar se da por terminado.
+        from.EndCombat();
         for (var i = 0; i < party.Count; i++)
         {
             from.RemoveToken(party[i].Id);
