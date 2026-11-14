@@ -9,7 +9,8 @@ El diseño completo está en el documento del proyecto; este repositorio contien
 
 Lo que ya funciona, en un solo PC:
 
-- Máster IA: lo que escribes en el chat lo lee Claude, que narra y actúa sobre la mesa con herramientas (tirar dados, mover fichas, daño y curación, medir distancias). El máster no inventa números: las tiradas y los cambios los hace el juego. Todavía no hay reglamento cargado, así que resuelve con una regla sencilla de 1d20 contra dificultad.
+- Máster IA: lo que escribes en el chat lo lee Claude, que narra y actúa sobre la mesa con herramientas (tirar dados, mover fichas, daño y curación, medir distancias). El máster no inventa números: las tiradas y los cambios los hace el juego.
+- Reglamentos: con el botón «Reglamentos» (o arrastrando los archivos a la ventana) se cargan manuales en PDF, Word (.docx) o TXT. El juego los lee una vez, los guarda troceados en tu PC y el máster busca en ellos la regla que necesita, citando libro y página. Sin reglamentos, resuelve con una regla sencilla de 1d20 contra dificultad.
 - Exploración fuera de combate: los lugares están enlazados por salidas doradas. Cuando un héroe pisa una, el grupo entero pasa al siguiente mapa, y la niebla se despeja a medida que los héroes avanzan.
 - Guardado automático: la partida (lugares, figuritas, niebla y registro) se guarda sola y se retoma al volver a abrir el juego. El botón «Nueva partida» empieza de cero.
 - El mapa ocupa siempre el centro de la pantalla y se monta a partir de una escena descrita con datos (`data/scenes/*.json`): terreno, figuritas y zonas sin explorar.
@@ -20,7 +21,9 @@ Lo que ya funciona, en un solo PC:
 
 La partida se guarda en la carpeta de datos del juego (`%APPDATA%\\Godot\\app_userdata\\RoleDMFable\\partida.json` en Windows).
 
-Lo siguiente: importar reglamentos (PDF, TXT, Word) y combate por turnos.
+Lo siguiente: combate por turnos y hojas de personaje.
+
+Los PDF escaneados (fotos de las páginas, sin texto seleccionable) no se pueden leer. Los reglamentos no salen de tu PC salvo los pasajes sueltos que el máster consulta, que se envían a Claude como parte de la conversación.
 
 ## Conectar el máster
 
@@ -44,6 +47,7 @@ La clave se guarda solo en tu PC (`ajustes.json`, junto a la partida) y solo se 
 | --- | --- |
 | `core/` | Reglas en C# puro, sin Godot: dados, escenas, estado de la mesa. Aquí decide el juego, nunca la IA. |
 | `master/` | Conexión con Claude: envía el estado de la mesa y ejecuta las herramientas que pide el máster. |
+| `rules/` | Lectura de reglamentos en PDF, Word y texto, y su guardado en disco. El buscador está en `core/`. |
 | `game/` | Pantallas de Godot: mapa, bandeja de dados, asientos y registro. |
 | `data/scenes/` | Escenas de ejemplo en JSON. |
 | `tests/` | Pruebas automáticas de `core/` y `master/` (el máster se prueba contra un servidor de imitación, sin clave). |
