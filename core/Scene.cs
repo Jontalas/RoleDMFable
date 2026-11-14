@@ -1,0 +1,93 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace RoleDMFable.Core;
+
+[JsonConverter(typeof(JsonStringEnumConverter<Terrain>))]
+public enum Terrain
+{
+    Floor,
+    Wall,
+    Water,
+    Bridge,
+    Rock,
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter<TokenKind>))]
+public enum TokenKind
+{
+    Hero,
+    Enemy,
+    Npc,
+}
+
+/// <summary>Un rectángulo de casillas, para paredes, agua o zonas sin explorar.</summary>
+public sealed record CellRect(int X, int Y, int W = 1, int H = 1);
+
+public sealed record FeatureSpec(Terrain Type, int X, int Y, int W = 1, int H = 1);
+
+public sealed record TokenSpec(
+    string Id,
+    string Name,
+    TokenKind Kind,
+    int X,
+    int Y,
+    int Hp,
+    int MaxHp,
+    string Color = "#888888",
+    string Icon = "",
+    string Role = "",
+    int? Seat = null);
+
+/// <summary>
+/// Un lugar descrito con datos, no con un dibujo. El máster describe la escena así
+/// y el juego monta el mapa, de modo que lo narrado y lo que se ve coinciden siempre.
+/// </summary>
+public sealed record SceneSpec(
+    string Id,
+    string Name,
+    int Width,
+    int Height,
+    int CellFeet = 5,
+    Terrain Base = Terrain.Floor,
+    IReadOnlyList<FeatureSpec>? Features = null,
+    IReadOnlyList<TokenSpec>? Tokens = null,
+    IReadOnlyList<CellRect>? Unexplored = null)
+{
+    public const int MaxSide = 200;
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true,
+    };
+
+    public static SceneSpec FromJson(string json)
+    {
+        var spec = JsonSerializer.Deserialize<SceneSpec>(json, JsonOptions)
+                   ?? throw new FormatException("La escena está vacía.");
+        spec.Validate();
+        return spec;
+    }
+
+    public string ToJson() => JsonSerializer.Serialize(this, JsonOptions);
+
+    public void Validate()
+    {
+        if (string.IsNullOrWhiteSpace(Id)) throw new FormatException("La escena necesita un id.");
+        if (Width < 1 || Height < 1 || Width > MaxSide || Height > MaxSide)
+            throw new FormatException($"El tamaño del mapa debe estar entre 1 y {MaxSide} casillas por lado.");
+        if (CellFeet < 1) throw new FormatException("Cada casilla debe medir al menos 1 pie.");
+
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var token in Tokens ?? Array.Empty<TokenSpec>())
+        {
+            if (string.IsNullOrWhiteSpace(token.Id)) throw new FormatException("Hay una ficha sin id.");
+            if (!ids.Add(token.Id)) throw new FormatException($"El id de ficha «{token.Id}» está repetido.");
+            if (token.X < 0 || token.Y < 0 || token.X >= Width || token.Y >= Height)
+                throw new FormatException($"La ficha «{token.Id}» está fuera del mapa.");
+        }
+    }
+}

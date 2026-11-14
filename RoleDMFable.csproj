@@ -1,0 +1,15 @@
+<Project Sdk="Godot.NET.Sdk/4.7.1">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <RootNamespace>RoleDMFable</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- core/ y tests/ son proyectos aparte; aquí solo entra el código que usa Godot. -->
+    <Compile Remove="core/**" />
+    <Compile Remove="tests/**" />
+    <ProjectReference Include="core/RoleDMFable.Core.csproj" />
+  </ItemGroup>
+</Project>
