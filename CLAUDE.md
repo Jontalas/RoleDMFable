@@ -1,6 +1,6 @@
 # RoleDMFable
 
-Mesa de rol virtual 2D con máster IA. Godot 4.7.1 (.NET) + C# sobre .NET 8. El usuario habla español y no tiene experiencia en desarrollo de juegos: textos de interfaz, README y mensajes en español.
+Mesa de rol virtual 2D con máster IA. Godot 4.7.1 (.NET) + C# sobre .NET 10 (LTS; .NET 8 caducó en noviembre de 2026). El usuario habla español y no tiene experiencia en desarrollo de juegos: textos de interfaz, README y mensajes en español.
 
 ## Reglas de arquitectura
 

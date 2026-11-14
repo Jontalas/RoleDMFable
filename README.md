@@ -19,7 +19,7 @@ Lo siguiente (fase 1): importar reglamentos, máster IA con herramientas y comba
 
 ## Cómo abrirlo en Windows
 
-1. Instala el [SDK de .NET 8](https://dotnet.microsoft.com/download/dotnet/8.0).
+1. Instala el [SDK de .NET 10](https://dotnet.microsoft.com/download/dotnet/10.0) (el «SDK», no el «Runtime»).
 2. Descarga **Godot 4.7.1 – .NET** desde [godotengine.org](https://godotengine.org/download/windows/) (la versión que dice «.NET», no la estándar) y descomprímela.
 3. Descarga este repositorio (botón verde «Code» › «Download ZIP», o con `git clone`).
 4. Abre Godot, pulsa «Importar», elige el archivo `project.godot` de la carpeta y ábrelo.
