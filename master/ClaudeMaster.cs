@@ -130,6 +130,89 @@ public sealed class ClaudeMaster : IMaster
         throw new MasterException("El máster ha encadenado demasiadas acciones seguidas y se ha parado el turno. Lo hecho hasta ahora queda en la mesa.");
     }
 
+    /// <summary>Tope de idas y vueltas al preparar la guía de creación.</summary>
+    public const int MaxGuideRounds = 8;
+
+    private static readonly IReadOnlyList<ToolUnion> GuideTools = CreationGuidePrompt.Tools.Select(ToTool).ToList();
+
+    /// <summary>
+    /// Lee una vez los reglamentos cargados y prepara la guía de creación de personajes.
+    /// Lanza <see cref="MasterException"/> con un mensaje para el jugador si no lo consigue.
+    /// </summary>
+    public async Task<(CreationGuide Guide, MasterUsage Usage)> BuildCreationGuideAsync(RulesLibrary rules, CancellationToken cancel = default)
+    {
+        if (!rules.BooksOf(BookKind.Rules).Any()) throw new MasterException("Carga antes un reglamento en «Reglamentos».");
+        var source = CreationGuidePrompt.SourceOf(rules);
+        var messages = new List<MessageParam> { new UserMessageParam { Content = CreationGuidePrompt.FirstMessage(rules) } };
+        long input = 0, output = 0, cached = 0;
+
+        for (var round = 0; round < MaxGuideRounds; round++)
+        {
+            Message response;
+            try
+            {
+                response = await _client.Messages.Create(new MessageCreateParams
+                {
+                    Model = _model,
+                    MaxTokens = 16000,
+                    System = new List<TextBlockParam> { new() { Text = CreationGuidePrompt.Instructions } },
+                    Tools = GuideTools,
+                    Messages = messages,
+                }, cancellationToken: cancel);
+            }
+            catch (AnthropicApiException e)
+            {
+                throw new MasterException(Explain(e), e);
+            }
+            catch (Exception e) when (e is AnthropicIOException or HttpRequestException)
+            {
+                throw new MasterException("No se pudo conectar con Claude. Comprueba tu conexión a internet y vuelve a intentarlo.", e);
+            }
+
+            input += response.Usage.InputTokens;
+            output += response.Usage.OutputTokens;
+            cached += response.Usage.CacheReadInputTokens ?? 0;
+
+            var echo = new List<ContentBlockParam>();
+            var results = new List<ContentBlockParam>();
+            foreach (var block in response.Content)
+            {
+                if (block.TryPickText(out var said)) echo.Add(new TextBlockParam { Text = said.Text });
+                else if (block.TryPickThinking(out var thinking)) echo.Add(new ThinkingBlockParam { Thinking = thinking.Thinking, Signature = thinking.Signature });
+                else if (block.TryPickRedactedThinking(out var redacted)) echo.Add(new RedactedThinkingBlockParam { Data = redacted.Data });
+                else if (block.TryPickToolUse(out var call))
+                {
+                    echo.Add(new ToolUseBlockParam { ID = call.ID, Name = call.Name, Input = call.Input });
+                    if (call.Name == CreationGuidePrompt.SaveTool)
+                    {
+                        if (CreationGuidePrompt.Accept(call.Input, source, out var problem) is { } guide)
+                            return (guide, new MasterUsage(input, output, cached));
+                        results.Add(new ToolResultBlockParam { ToolUseID = call.ID, Content = problem, IsError = true });
+                    }
+                    else if (call.Name == CreationGuidePrompt.SearchTool)
+                    {
+                        results.Add(new ToolResultBlockParam { ToolUseID = call.ID, Content = CreationGuidePrompt.Search(rules, call.Input).Result });
+                    }
+                    else
+                    {
+                        results.Add(new ToolResultBlockParam { ToolUseID = call.ID, Content = "Esa herramienta no existe.", IsError = true });
+                    }
+                }
+            }
+
+            var stop = response.StopReason?.Raw();
+            if (stop == "refusal") throw new MasterException("El máster no ha querido preparar la guía con ese reglamento.");
+            if (stop == "max_tokens") throw new MasterException("La guía ha salido demasiado larga y se ha cortado. Vuelve a intentarlo.");
+            messages.Add(new AssistantMessageParam { Content = echo });
+            messages.Add(new UserMessageParam
+            {
+                Content = results.Count > 0 ? results : new List<ContentBlockParam> { new TextBlockParam { Text = "Guarda la guía con guardar_guia." } },
+            });
+        }
+
+        throw new MasterException("El máster no ha conseguido terminar la guía de creación. Vuelve a intentarlo o prueba con otro modelo.");
+    }
+
     private static readonly IReadOnlyList<ToolUnion> ToolDefinitions = MasterToolbox.Tools.Select(ToTool).ToList();
 
     private static ToolUnion ToTool(MasterTool tool)

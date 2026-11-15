@@ -108,4 +108,67 @@ public static class Ui
         input.AddThemeStyleboxOverride("focus", focus);
         return input;
     }
+
+    /// <summary>
+    /// El aspecto común de las ventanas (menús, fichas, ajustes): marco oscuro con título dorado,
+    /// fondo de pergamino, texto en tinta y botones como los del resto del juego.
+    /// </summary>
+    public static Theme WindowTheme()
+    {
+        var theme = new Theme { DefaultFont = Body(700), DefaultFontSize = 15 };
+
+        var frame = new StyleBoxFlat { BgColor = Ink, AntiAliasing = true };
+        frame.SetCornerRadiusAll(16);
+        frame.SetExpandMarginAll(5);
+        frame.ExpandMarginTop = 46;
+        foreach (var name in new[] { "embedded_border", "embedded_unfocused_border" })
+            theme.SetStylebox(name, "Window", frame);
+        theme.SetColor("title_color", "Window", Gold);
+        theme.SetFont("title_font", "Window", Title());
+        theme.SetFontSize("title_font_size", "Window", 22);
+        theme.SetConstant("title_height", "Window", 44);
+        theme.SetConstant("close_h_offset", "Window", 30);
+        theme.SetConstant("close_v_offset", "Window", 30);
+
+        var paper = new StyleBoxFlat { BgColor = Parchment, AntiAliasing = true };
+        paper.SetCornerRadiusAll(12);
+        paper.SetContentMarginAll(18);
+        theme.SetStylebox("panel", "AcceptDialog", paper);
+        theme.SetConstant("buttons_separation", "AcceptDialog", 14);
+        theme.SetConstant("buttons_min_height", "AcceptDialog", 48);
+        theme.SetConstant("buttons_min_width", "AcceptDialog", 150);
+
+        theme.SetColor("font_color", "Label", Ink);
+
+        theme.SetStylebox("normal", "Button", Box(Cream, 12, 3, 3, 8));
+        theme.SetStylebox("hover", "Button", Box(Cream.Lightened(0.5f), 12, 3, 3, 8));
+        theme.SetStylebox("pressed", "Button", Box(Cream.Darkened(0.08f), 12, 3, 3, 8));
+        theme.SetStylebox("disabled", "Button", Box(Parchment.Darkened(0.12f), 12, 3, 3, 8));
+        var focus = new StyleBoxFlat { DrawCenter = false, BorderColor = Gold.Darkened(0.2f) };
+        focus.SetBorderWidthAll(3);
+        focus.SetCornerRadiusAll(14);
+        focus.SetExpandMarginAll(3);
+        theme.SetStylebox("focus", "Button", focus);
+        theme.SetFont("font", "Button", Body(800));
+        theme.SetFontSize("font_size", "Button", 16);
+        foreach (var kind in new[] { "Button", "CheckBox" })
+        {
+            foreach (var state in new[] { "font_color", "font_hover_color", "font_pressed_color", "font_focus_color", "font_hover_pressed_color" })
+                theme.SetColor(state, kind, Ink);
+            theme.SetColor("font_disabled_color", kind, new Color(Ink, 0.45f));
+        }
+        foreach (var kind in new[] { "TextEdit", "LineEdit" })
+        {
+            theme.SetStylebox("normal", kind, Box(Colors.White, 12, 3, 0, 10));
+            var active = Box(Colors.White, 12, 3, 0, 10);
+            active.BorderColor = Gold.Darkened(0.25f);
+            theme.SetStylebox("focus", kind, active);
+            theme.SetStylebox("read_only", kind, Box(Parchment.Darkened(0.06f), 12, 3, 0, 10));
+            theme.SetColor("font_color", kind, Ink);
+            theme.SetColor("caret_color", kind, Ink);
+            theme.SetColor("font_placeholder_color", kind, new Color(Ink, 0.55f));
+            theme.SetColor("selection_color", kind, new Color(Gold, 0.55f));
+        }
+        return theme;
+    }
 }
