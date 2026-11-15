@@ -21,6 +21,9 @@ public static class CampaignSetup
 
     private static readonly string[] Colors = { "#3f6fbf", "#7c4fb3", "#1f8a7a", "#c98a2b", "#b8472f", "#5b8f3a" };
 
+    /// <summary>Un color de peana para el personaje número <paramref name="index"/>, para que no coincidan.</summary>
+    public static string HeroColor(int index) => Colors[(index % Colors.Length + Colors.Length) % Colors.Length];
+
     /// <summary>
     /// Crea la partida con el grupo reunido en un claro vacío, a la espera de que el máster abra la aventura.
     /// Lanza <see cref="FormatException"/> con un mensaje para el jugador si algo no vale.

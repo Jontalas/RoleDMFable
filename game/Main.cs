@@ -100,11 +100,16 @@ public partial class Main : Control
         _rules.Changed += RefreshRulesList;
         GetWindow().FilesDropped += files => _ = ImportRules(files);
 
+        Theme = Ui.WindowTheme();
         string? notice = null;
         IReadOnlyList<string> grown = Array.Empty<string>();
         var (loaded, loadedId) = _ephemeral ? (null, null) : TryLoadSave(out notice, out grown);
         BuildLayout();
-        StartGame(loaded ?? NewCampaign(), isNew: loaded is null, loadedId);
+        BuildMenu();
+        LoadGuide();
+        // Sin partidas guardadas, detrás del menú queda una mesa de muestra que no se guarda.
+        StartGame(loaded ?? NewCampaign(), isNew: _ephemeral, loadedId ?? (_ephemeral ? null : ""));
+        if (!_ephemeral || args.Contains("--menu")) ShowMenu();
         SayGrown(grown);
         if (notice is not null) Say("Mesa", notice);
         foreach (var problem in rulesProblems) Say("Mesa", problem);
@@ -207,6 +212,7 @@ public partial class Main : Control
         }
         _masterTurn?.Cancel();
         _gameId = id ?? _games.NewId(game.Name);
+        if (_menu is not null) HideMenu();
         _game = game;
         _game.Changed += OnGameChanged;
         _tools = new MasterToolbox(_game, new SystemRandomSource(), _rules);
@@ -237,7 +243,7 @@ public partial class Main : Control
                 ? "La partida se guarda sola. Escribe abajo lo que hace tu personaje y el máster te responderá."
                 : "La partida se guarda sola. Para que el máster responda, pulsa «Máster IA» arriba y pon tu clave.");
         }
-        else
+        else if (_gameId.Length > 0)
         {
             Say("Mesa", $"Partida retomada en {_table.SceneName}.");
         }
@@ -266,6 +272,7 @@ public partial class Main : Control
     private void SaveNow()
     {
         _saveCountdown = -1;
+        if (_gameId.Length == 0) return;
         try
         {
             _games.Save(_gameId, _game);
@@ -331,7 +338,7 @@ public partial class Main : Control
         var dialog = new AcceptDialog
         {
             Title = "Partidas",
-            OkButtonText = "Seguir jugando",
+            OkButtonText = "Cerrar",
             MinSize = new Vector2I(820, 0),
         };
         dialog.AddButton("Nueva partida", true, "nueva");
@@ -433,7 +440,8 @@ public partial class Main : Control
         dialog.PopupCentered();
     }
 
-    private void AskNewGame(IReadOnlyList<HeroSetup>? prefill = null)
+    /// <summary>Nueva partida: nombre, idea de la aventura y quiénes juegan, elegidos entre los personajes creados.</summary>
+    private void AskNewGame(string gameName = "", string idea = "")
     {
         var dialog = new AcceptDialog
         {
@@ -442,121 +450,56 @@ public partial class Main : Control
             MinSize = new Vector2I(820, 0),
             DialogHideOnOk = false,
         };
-        dialog.AddCancelButton("Seguir jugando");
+        dialog.AddCancelButton("Cancelar");
+        dialog.AddButton("Crear personaje", true, "crear");
         dialog.AddButton("Partida de ejemplo", true, "ejemplo");
 
         var column = new VBoxContainer();
         column.AddThemeConstantOverride("separation", 8);
         dialog.AddChild(column);
 
-        column.AddChild(DialogText("La partida actual queda guardada: puedes volver a ella cuando quieras desde «Partidas».", 600));
         column.AddChild(DialogText("Nombre de la aventura", 800));
         var name = Ui.Input("La torre hundida");
+        name.Text = gameName;
         column.AddChild(name);
         column.AddChild(DialogText("¿De qué queréis que vaya? (opcional)", 800));
         var premise = Ui.Input("Una frase basta: «buscamos a un mago desaparecido en una ciudad de canales»");
+        premise.Text = idea;
         column.AddChild(premise);
 
-        // Personajes de aventuras anteriores: entran ya creados, con su ficha.
+        column.AddChild(DialogText("¿Quién juega?", 800));
         var saved = _heroes.LoadAll();
         var picks = new List<(SavedHero Hero, CheckBox Joins, CheckBox Player)>();
-        if (saved.Count > 0)
+        if (saved.Count == 0)
         {
-            column.AddChild(DialogText("Personajes guardados", 800));
-            column.AddChild(DialogText("Marca los que vuelven en esta aventura. Entran con su ficha tal como quedó.", 600));
+            column.AddChild(DialogText("Todavía no tienes personajes. Pulsa «Crear personaje» para hacer el primero y vuelve aquí para empezar.", 600));
+        }
+        else
+        {
+            column.AddChild(DialogText($"Marca los personajes que entran en esta aventura, hasta {CampaignSetup.MaxHeroes}. Los que no lleve un jugador acompañan al grupo.", 600));
+            var scroll = new ScrollContainer { CustomMinimumSize = new Vector2(0, Math.Min(300, saved.Count * 50 + 8)), HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
+            var list = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+            list.AddThemeConstantOverride("separation", 4);
+            scroll.AddChild(list);
+            column.AddChild(scroll);
             foreach (var hero in saved)
             {
                 var row = new HBoxContainer();
                 row.AddThemeConstantOverride("separation", 10);
-                var from = hero.LastAdventure.Length > 0 ? $" · viene de «{hero.LastAdventure}»" : "";
                 var role = hero.Role.Length > 0 ? $" · {hero.Role}" : "";
-                var joins = new CheckBox { Text = $"{hero.Name}{role} · PV {hero.MaxHp}{from}", SizeFlagsHorizontal = SizeFlags.ExpandFill, ClipText = true };
+                var joins = new CheckBox { Text = $"{hero.Name}{role} · PV {hero.MaxHp}", SizeFlagsHorizontal = SizeFlags.ExpandFill, ClipText = true, ButtonPressed = saved.Count == 1 };
                 joins.AddThemeFontOverride("font", Ui.Body(800));
                 var asPlayer = new CheckBox { Text = "Lo lleva un jugador", ButtonPressed = true };
                 asPlayer.AddThemeFontOverride("font", Ui.Body(700));
-                var forget = Ui.Button("Borrar", Ui.Parchment, 13);
-                forget.TooltipText = "Borra este personaje guardado para siempre";
-                forget.Pressed += () =>
-                {
-                    // Dos pulsaciones: borrar un personaje no tiene vuelta atrás.
-                    if (forget.Text != "¿Seguro?")
-                    {
-                        forget.Text = "¿Seguro?";
-                        return;
-                    }
-                    _heroes.Delete(hero.Id);
-                    picks.RemoveAll(p => p.Hero.Id == hero.Id);
-                    column.RemoveChild(row);
-                    row.QueueFree();
-                    dialog.ResetSize();
-                };
                 row.AddChild(joins);
                 row.AddChild(asPlayer);
-                row.AddChild(forget);
-                column.AddChild(row);
+                list.AddChild(row);
                 picks.Add((hero, joins, asPlayer));
             }
         }
-
-        column.AddChild(DialogText(saved.Count > 0 ? "Héroes nuevos" : "Héroes", 800));
-        column.AddChild(DialogText(
-            "Aquí solo va lo básico. Antes de empezar, el máster crea cada personaje contigo según el reglamento cargado, y queda guardado para otras aventuras.", 600));
-        var rows = new VBoxContainer();
-        rows.AddThemeConstantOverride("separation", 6);
-        column.AddChild(rows);
-        var add = Ui.Button("Añadir héroe", Ui.Parchment, 14);
-        column.AddChild(add);
         var problem = DialogText("", 800);
         problem.AddThemeColorOverride("font_color", Ui.Red);
         column.AddChild(problem);
-
-        var heroes = new List<(HBoxContainer Row, LineEdit Name, LineEdit Role, OptionButton Look, CheckBox Player)>();
-
-        void AddRow(HeroSetup? hero)
-        {
-            if (heroes.Count >= CampaignSetup.MaxHeroes) return;
-            var row = new HBoxContainer();
-            row.AddThemeConstantOverride("separation", 6);
-            var heroName = Ui.Input("Nombre");
-            heroName.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-            heroName.MaxLength = CampaignSetup.MaxNameLength;
-            heroName.Text = hero?.Name ?? "";
-            var role = Ui.Input("Qué es: elfa exploradora");
-            role.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-            role.MaxLength = 40;
-            role.Text = hero?.Role ?? "";
-            var look = new OptionButton { CustomMinimumSize = new Vector2(130, 48), TooltipText = "Aspecto de la figurita en el mapa" };
-            look.AddThemeFontOverride("font", Ui.Body(700));
-            foreach (var (label, icon) in CampaignSetup.Looks)
-            {
-                look.AddItem(label);
-                if (hero is not null && hero.Icon == icon) look.Selected = look.ItemCount - 1;
-            }
-            var player = new CheckBox { Text = "Lo lleva un jugador", ButtonPressed = hero?.HasPlayer ?? true, TooltipText = "Sin marcar, acompaña al grupo y lo lleváis entre todos" };
-            player.AddThemeFontOverride("font", Ui.Body(700));
-            var remove = Ui.Button("Quitar", Ui.Parchment, 13);
-            row.AddChild(heroName);
-            row.AddChild(role);
-            row.AddChild(look);
-            row.AddChild(player);
-            row.AddChild(remove);
-            rows.AddChild(row);
-            var entry = (row, heroName, role, look, player);
-            heroes.Add(entry);
-            remove.Pressed += () =>
-            {
-                heroes.Remove(entry);
-                rows.RemoveChild(row);
-                row.QueueFree();
-                add.Disabled = false;
-                dialog.ResetSize();
-            };
-            add.Disabled = heroes.Count >= CampaignSetup.MaxHeroes;
-            dialog.ResetSize();
-        }
-
-        foreach (var hero in prefill ?? (saved.Count > 0 ? new HeroSetup?[] { null } : new HeroSetup?[] { null, null })) AddRow(hero);
-        add.Pressed += () => AddRow(null);
 
         dialog.Confirmed += () =>
         {
@@ -565,11 +508,10 @@ public partial class Main : Control
                 var party = picks
                     .Where(p => p.Joins.ButtonPressed)
                     .Select(p => new HeroSetup(p.Hero.Name, HasPlayer: p.Player.ButtonPressed, Saved: p.Hero))
-                    .Concat(heroes
-                        .Where(h => h.Name.Text.Trim().Length > 0 || h.Role.Text.Trim().Length > 0)
-                        .Select(h => new HeroSetup(h.Name.Text, h.Role.Text, CampaignSetup.Looks[Math.Max(0, h.Look.Selected)].Icon, HasPlayer: h.Player.ButtonPressed)))
                     .ToList();
-                var game = CampaignSetup.Create(name.Text, premise.Text, party, _heroes.Exists);
+                if (party.Count == 0)
+                    throw new FormatException(saved.Count == 0 ? "Crea antes un personaje." : "Marca al menos un personaje para jugar.");
+                var game = CampaignSetup.Create(name.Text, premise.Text, party);
                 dialog.Hide();
                 StartGame(game, isNew: true);
             }
@@ -580,9 +522,9 @@ public partial class Main : Control
         };
         dialog.CustomAction += action =>
         {
-            if (action != "ejemplo") return;
             dialog.Hide();
-            StartGame(NewCampaign(), isNew: true);
+            if (action == "ejemplo") StartGame(NewCampaign(), isNew: true);
+            else if (action == "crear") OpenCreation(() => AskNewGame(name.Text, premise.Text));
         };
         dialog.VisibilityChanged += () =>
         {
@@ -590,11 +532,6 @@ public partial class Main : Control
         };
         AddChild(dialog);
         dialog.PopupCentered();
-        if (prefill is not null)
-        {
-            name.Text = "La torre hundida";
-            premise.Text = "Buscamos a un mago desaparecido en una ciudad de canales";
-        }
     }
 
     // ---------- Construcción de la pantalla ----------
@@ -690,11 +627,11 @@ public partial class Main : Control
         master.Pressed += OpenSettings;
         row.AddChild(master);
         RefreshMasterStatus();
-        var games = Ui.Button("Partidas", Ui.Parchment, 13);
-        games.CustomMinimumSize = new Vector2(0, 44);
-        games.TooltipText = "Continuar otra partida guardada o empezar una nueva";
-        games.Pressed += OpenGames;
-        row.AddChild(games);
+        var menu = Ui.Button("Menú", Ui.Parchment, 13);
+        menu.CustomMinimumSize = new Vector2(0, 44);
+        menu.TooltipText = "Volver al menú principal: partidas, personajes y ajustes";
+        menu.Pressed += ShowMenu;
+        row.AddChild(menu);
         return bar;
     }
 
@@ -1448,11 +1385,36 @@ public partial class Main : Control
             _games.Save(_gameId, _game);
             OpenGames();
         }
+        if (OS.GetCmdlineUserArgs().Contains("--personajes") || OS.GetCmdlineUserArgs().FirstOrDefault(a => a.StartsWith("--crear")) is not null)
+        {
+            _guide = new CreationGuide("Reinos de Bruma", new[]
+            {
+                new CreationStep("Pueblo", StepKind.Choice, "Tu pueblo marca de dónde vienes y te da un don de nacimiento.", Options: new[]
+                {
+                    new CreationOption("Humano", "Se adapta a todo: un punto más en la característica que elijas."),
+                    new CreationOption("Enano", "Duro como la piedra: aguanta venenos y ve en la oscuridad."),
+                    new CreationOption("Elfo", "Sentidos finos y paso ligero: ventaja al acechar y al escuchar."),
+                    new CreationOption("Mediano", "Pequeño y con suerte: repite una tirada fallida al día."),
+                }),
+                new CreationStep("Oficio", StepKind.Choice, "A qué se dedica tu personaje.", Options: new[] { new CreationOption("Guerrero", "Armas y armaduras."), new CreationOption("Mago", "Conjuros y saber."), new CreationOption("Explorador", "Rastreo y arco.") }),
+                new CreationStep("Características", StepKind.Roll, "Se tiran 3d6 para cada característica, en este orden. Lo que salga es con lo que nace tu personaje.", Dice: "3d6", Targets: new[] { "Fuerza", "Destreza", "Aguante", "Ingenio", "Presencia" }),
+                new CreationStep("Aguante de guerrero", StepKind.Roll, "Los guerreros empiezan con 1d10+4 puntos de vida.", Entry: "Puntos de vida", Dice: "1d10+4", Hp: true, When: "Oficio", WhenValues: new[] { "Guerrero" }),
+                new CreationStep("Aguante", StepKind.Roll, "Empiezas con 1d6+4 puntos de vida.", Entry: "Puntos de vida", Dice: "1d6+4", Hp: true, When: "Oficio", WhenValues: new[] { "Mago", "Explorador" }),
+                new CreationStep("Equipo", StepKind.Text, "Apunta lo que llevas al empezar.", Optional: true),
+            }).Checked();
+            _heroes.Save(new SavedHero("lira", "Lira", "Exploradora elfa", "", "#1f8a7a", 23, new[] { new SheetEntry("Nivel", "3") }, "El pantano de los susurros"));
+            _heroes.Save(new SavedHero("brom", "Brom", "Enano herrero", "sword", "#c98a2b", 31, new[] { new SheetEntry("Nivel", "3") }, "El pantano de los susurros"));
+            _heroes.Save(new SavedHero("fen", "Fen", "Hechicero curioso", "hat", "#7c4fb3", 9, new[] { new SheetEntry("Nivel", "1") }));
+            if (OS.GetCmdlineUserArgs().FirstOrDefault(a => a.StartsWith("--crear")) is { } creating)
+                OpenCreation(null, creating.Contains('=') && int.TryParse(creating[(creating.IndexOf('=') + 1)..], out var skip) ? skip : 0);
+            else
+                OpenHeroes();
+        }
         if (OS.GetCmdlineUserArgs().Contains("--nueva"))
         {
             _heroes.Save(new SavedHero("lira", "Lira", "Exploradora elfa", "", "#1f8a7a", 23, new[] { new SheetEntry("Nivel", "3") }, "El pantano de los susurros"));
             _heroes.Save(new SavedHero("brom", "Brom", "Enano herrero", "sword", "#c98a2b", 31, new[] { new SheetEntry("Nivel", "3") }, "El pantano de los susurros"));
-            AskNewGame(new[] { new HeroSetup("Ánika la Roja", "Bárbara del norte", "sword"), new HeroSetup("Fen", "Hechicero curioso", "hat"), new HeroSetup("Mulo", "Porteador", "", HasPlayer: false) });
+            AskNewGame("La torre hundida", "Buscamos a un mago desaparecido en una ciudad de canales");
         }
         if (OS.GetCmdlineUserArgs().Contains("--propia"))
         {

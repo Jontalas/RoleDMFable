@@ -285,4 +285,41 @@ public class ClaudeMasterTests
             master.PlayTurnAsync(game, new MasterToolbox(game, new Always(1)), "Kael", "Hola", _ => { }));
         Assert.Equal(ClaudeMaster.MaxRounds, api.Requests.Count);
     }
+
+    [Fact]
+    public async Task ReadsTheRulebookOnceAndReturnsACreationGuide()
+    {
+        var rules = new RulesLibrary();
+        rules.Add(Rulebook.FromPages("Reglas de la casa", "casa.txt", new[]
+        {
+            new RulePage(1, "Creación de personaje. Elige una clase: guerrero o mago. Tira 3d6 para Fuerza y Destreza."),
+            new RulePage(2, "Puntos de vida iniciales: el guerrero tira 1d10 y el mago 1d4."),
+        }));
+        using var api = new FakeApi(
+            (200, Reply("tool_use", """{"type":"tool_use","id":"toolu_1","name":"buscar_reglas","input":{"consulta":"puntos de vida iniciales"}}""")),
+            (200, Reply("tool_use", """{"type":"tool_use","id":"toolu_2","name":"guardar_guia","input":{"title":"Reglas de la casa","steps":[{"title":"Clase","kind":"choice","options":[{"label":"Guerrero"}]}]}}""")),
+            (200, Reply("tool_use", """
+                {"type":"tool_use","id":"toolu_3","name":"guardar_guia","input":{"title":"Reglas de la casa","steps":[
+                  {"title":"Clase","kind":"choice","options":[{"label":"Guerrero","detail":"Aguanta"},{"label":"Mago","detail":"Conjura"}]},
+                  {"title":"Características","kind":"roll","dice":"3d6","targets":["Fuerza","Destreza"]},
+                  {"title":"Golpes","kind":"roll","dice":"1d10","entry":"Puntos de vida","hp":true,"when":"Clase","whenValues":["Guerrero"]},
+                  {"title":"Golpes de mago","kind":"roll","dice":"1d4","entry":"Puntos de vida","hp":true,"when":"Clase","whenValues":["Mago"]}]}}
+                """)));
+
+        var master = new ClaudeMaster("clave", "claude-haiku-5-5", api.Url);
+        var (guide, usage) = await master.BuildCreationGuideAsync(rules);
+
+        Assert.Equal(("Reglas de la casa", "Reglas de la casa", 4), (guide.Title, guide.Source, guide.Steps.Count));
+        Assert.Equal(300, usage.InputTokens);
+        var first = api.Requests[0].RootElement;
+        Assert.Equal(2, first.GetProperty("tools").GetArrayLength());
+        Assert.Contains("Elige una clase", first.GetProperty("messages")[0].GetProperty("content").GetString());
+        Assert.Contains("1d10", api.Requests[1].RootElement.GetProperty("messages")[2].GetProperty("content")[0].GetProperty("content").GetString());
+        // La primera guía no valía (una sola opción): se le dice por qué y la corrige.
+        var rejected = api.Requests[2].RootElement.GetProperty("messages")[4].GetProperty("content")[0];
+        Assert.True(rejected.GetProperty("is_error").GetBoolean());
+        Assert.Contains("dos opciones", rejected.GetProperty("content").GetString());
+
+        await Assert.ThrowsAsync<MasterException>(() => master.BuildCreationGuideAsync(new RulesLibrary()));
+    }
 }
