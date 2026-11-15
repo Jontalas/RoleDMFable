@@ -18,6 +18,7 @@ public partial class Main : Control
     private const double SaveDelaySeconds = 0.5;
     private const string SettingsPath = "user://ajustes.json";
     private const string RulesFolder = "user://reglamentos";
+    private const string HeroesFolder = "user://personajes";
 
     private Campaign _game = null!;
     private TableState _table => _game.Current;
@@ -50,6 +51,9 @@ public partial class Main : Control
     private string? _lastTurnId;
 
     // Reglamentos: se leen una vez y se guardan troceados en este PC.
+    // Personajes guardados: viven fuera de la partida para poder entrar en varias aventuras.
+    private HeroStore _heroes = null!;
+
     private readonly RulesLibrary _rules = new();
     private RulesStore? _rulesStore;
     private VBoxContainer? _rulesList;
@@ -74,6 +78,11 @@ public partial class Main : Control
         {
             LoadSettings();
         }
+
+        // Las capturas de revisión usan una carpeta aparte para no tocar los personajes del jugador.
+        _heroes = new HeroStore(_ephemeral
+            ? System.IO.Path.Combine(System.IO.Path.GetTempPath(), "roledmfable-captura-personajes")
+            : ProjectSettings.GlobalizePath(HeroesFolder));
 
         var rulesProblems = new List<string>();
         if (!_ephemeral)
@@ -159,7 +168,9 @@ public partial class Main : Control
         {
             // Partida propia: el máster abre la aventura creando el primer lugar.
             Say("Mesa", $"Empieza «{_game.Name}». La partida se guarda sola.");
-            Say("Mesa", "Antes de la aventura se crean los personajes, uno a uno, con el máster y según el reglamento cargado. Cuando estén todos, el máster abrirá la historia.");
+            Say("Mesa", CampaignSetup.PendingHeroes(_game).Count > 0
+                ? "Antes de la aventura se crean los personajes nuevos, uno a uno, con el máster y según el reglamento cargado. Cuando estén todos, el máster abrirá la historia."
+                : "Todos los personajes vienen ya creados, así que el máster abre la historia.");
             if (HasMaster)
                 _ = AskMaster("Mesa", CampaignSetup.StartRequest(_game));
             else
@@ -212,8 +223,22 @@ public partial class Main : Control
             }
             file.StoreString(_game.ToJson());
         }
+        SaveHeroes();
         var error = DirAccess.RenameAbsolute(temp, SavePath);
         if (error != Error.Ok) GD.PushError($"No se pudo guardar la partida: {error}");
+    }
+
+    /// <summary>Lo que los héroes han ganado en esta partida pasa a sus personajes guardados.</summary>
+    private void SaveHeroes()
+    {
+        try
+        {
+            _heroes.SaveFrom(_game);
+        }
+        catch (Exception e) when (e is System.IO.IOException or UnauthorizedAccessException)
+        {
+            GD.PushError($"No se pudieron guardar los personajes: {e.Message}");
+        }
     }
 
     private void OnTokenMoved(string id, int feet)
@@ -261,9 +286,50 @@ public partial class Main : Control
         var premise = Ui.Input("Una frase basta: «buscamos a un mago desaparecido en una ciudad de canales»");
         column.AddChild(premise);
 
-        column.AddChild(DialogText("Héroes", 800));
+        // Personajes de aventuras anteriores: entran ya creados, con su ficha.
+        var saved = _heroes.LoadAll();
+        var picks = new List<(SavedHero Hero, CheckBox Joins, CheckBox Player)>();
+        if (saved.Count > 0)
+        {
+            column.AddChild(DialogText("Personajes guardados", 800));
+            column.AddChild(DialogText("Marca los que vuelven en esta aventura. Entran con su ficha tal como quedó.", 600));
+            foreach (var hero in saved)
+            {
+                var row = new HBoxContainer();
+                row.AddThemeConstantOverride("separation", 10);
+                var from = hero.LastAdventure.Length > 0 ? $" · viene de «{hero.LastAdventure}»" : "";
+                var role = hero.Role.Length > 0 ? $" · {hero.Role}" : "";
+                var joins = new CheckBox { Text = $"{hero.Name}{role} · PV {hero.MaxHp}{from}", SizeFlagsHorizontal = SizeFlags.ExpandFill, ClipText = true };
+                joins.AddThemeFontOverride("font", Ui.Body(800));
+                var asPlayer = new CheckBox { Text = "Lo lleva un jugador", ButtonPressed = true };
+                asPlayer.AddThemeFontOverride("font", Ui.Body(700));
+                var forget = Ui.Button("Borrar", Ui.Parchment, 13);
+                forget.TooltipText = "Borra este personaje guardado para siempre";
+                forget.Pressed += () =>
+                {
+                    // Dos pulsaciones: borrar un personaje no tiene vuelta atrás.
+                    if (forget.Text != "¿Seguro?")
+                    {
+                        forget.Text = "¿Seguro?";
+                        return;
+                    }
+                    _heroes.Delete(hero.Id);
+                    picks.RemoveAll(p => p.Hero.Id == hero.Id);
+                    column.RemoveChild(row);
+                    row.QueueFree();
+                    dialog.ResetSize();
+                };
+                row.AddChild(joins);
+                row.AddChild(asPlayer);
+                row.AddChild(forget);
+                column.AddChild(row);
+                picks.Add((hero, joins, asPlayer));
+            }
+        }
+
+        column.AddChild(DialogText(saved.Count > 0 ? "Héroes nuevos" : "Héroes", 800));
         column.AddChild(DialogText(
-            "Aquí solo va lo básico. Las características, los ataques y los puntos de vida los completa el máster contigo según el reglamento cargado.", 600));
+            "Aquí solo va lo básico. Antes de empezar, el máster crea cada personaje contigo según el reglamento cargado, y queda guardado para otras aventuras.", 600));
         var rows = new VBoxContainer();
         rows.AddThemeConstantOverride("separation", 6);
         column.AddChild(rows);
@@ -318,18 +384,21 @@ public partial class Main : Control
             dialog.ResetSize();
         }
 
-        foreach (var hero in prefill ?? new HeroSetup?[] { null, null }) AddRow(hero);
+        foreach (var hero in prefill ?? (saved.Count > 0 ? new HeroSetup?[] { null } : new HeroSetup?[] { null, null })) AddRow(hero);
         add.Pressed += () => AddRow(null);
 
         dialog.Confirmed += () =>
         {
             try
             {
-                var party = heroes
-                    .Where(h => h.Name.Text.Trim().Length > 0 || h.Role.Text.Trim().Length > 0)
-                    .Select(h => new HeroSetup(h.Name.Text, h.Role.Text, CampaignSetup.Looks[Math.Max(0, h.Look.Selected)].Icon, HasPlayer: h.Player.ButtonPressed))
+                var party = picks
+                    .Where(p => p.Joins.ButtonPressed)
+                    .Select(p => new HeroSetup(p.Hero.Name, HasPlayer: p.Player.ButtonPressed, Saved: p.Hero))
+                    .Concat(heroes
+                        .Where(h => h.Name.Text.Trim().Length > 0 || h.Role.Text.Trim().Length > 0)
+                        .Select(h => new HeroSetup(h.Name.Text, h.Role.Text, CampaignSetup.Looks[Math.Max(0, h.Look.Selected)].Icon, HasPlayer: h.Player.ButtonPressed)))
                     .ToList();
-                var game = CampaignSetup.Create(name.Text, premise.Text, party);
+                var game = CampaignSetup.Create(name.Text, premise.Text, party, _heroes.Exists);
                 dialog.Hide();
                 StartGame(game, isNew: true);
             }
@@ -1202,6 +1271,8 @@ public partial class Main : Control
         }
         if (OS.GetCmdlineUserArgs().Contains("--nueva"))
         {
+            _heroes.Save(new SavedHero("lira", "Lira", "Exploradora elfa", "", "#1f8a7a", 23, new[] { new SheetEntry("Nivel", "3") }, "El pantano de los susurros"));
+            _heroes.Save(new SavedHero("brom", "Brom", "Enano herrero", "sword", "#c98a2b", 31, new[] { new SheetEntry("Nivel", "3") }, "El pantano de los susurros"));
             AskNewGame(new[] { new HeroSetup("Ánika la Roja", "Bárbara del norte", "sword"), new HeroSetup("Fen", "Hechicero curioso", "hat"), new HeroSetup("Mulo", "Porteador", "", HasPlayer: false) });
         }
         if (OS.GetCmdlineUserArgs().Contains("--propia"))
