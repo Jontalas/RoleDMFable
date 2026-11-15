@@ -15,6 +15,7 @@ Mesa de rol virtual 2D con máster IA. Godot 4.7.1 (.NET) + C# sobre .NET 10 (LT
 - El máster construye los lugares de la aventura con herramientas (`crear_lugar` con un plano de texto `. # ~ = o`, `ir_a_lugar`, `poner_ficha`, `traer_ficha`, `quitar_ficha`, `cambiar_terreno`, `revelar_zona`): todo pasa por `Campaign`/`TableState`, que validan antes de tocar la partida.
 - Una partida propia nace en `CampaignSetup` (`core/Setup.cs`): nombre, idea de la aventura y héroes con lo mínimo (nombre, qué es, aspecto, si lo lleva un jugador). No pide nada que dependa de un reglamento: la hoja y los puntos de vida los completa el máster con el jugador según las reglas cargadas (`anotar_ficha`, `fijar_pv_maximos`). El grupo empieza en «Punto de partida» con los héroes sin crear (`Token.Created`): la creación es obligatoria y `crear_lugar`/`ir_a_lugar` se niegan hasta que el máster marque a todos con `personaje_listo`. Entonces abre la aventura creando el primer lugar.
 - Los personajes viven fuera de la partida (`core/Heroes.cs`: `SavedHero`, `HeroStore`, carpeta `user://personajes/`): al guardar una partida propia, cada héroe ya creado se copia a su archivo con su hoja y sus PV máximos, y en «Nueva partida» se pueden elegir para otra aventura, donde entran ya creados. Un héroe nuevo no puede pisar a uno guardado con el mismo nombre.
+- Las partidas guardadas viven en `user://partidas/`, un archivo por partida (`core/Saves.cs`: `CampaignStore`, `SavedGameInfo`). Al arrancar se abre la última jugada; al cambiar de partida la actual se guarda antes. Al retomar una partida propia, `HeroStore.ApplyTo` pone a sus héroes al día con el personaje guardado, que es la verdad sobre su hoja y sus PV máximos.
 - La IA no calcula números ni tira dados: pedirá acciones mediante herramientas y `core/` las ejecuta.
 - Estilo visual: contorno grueso `Ui.Ink`, colores planos, tipografías Baloo 2 (títulos) y Nunito (texto). Usar los ayudantes de `Ui.cs`.
 
@@ -25,5 +26,5 @@ dotnet test tests                      # pruebas de core, master y rules
 dotnet build RoleDMFable.csproj        # compilar el juego
 godot --headless --import              # tras añadir recursos
 # Captura para revisar el aspecto (necesita pantalla; en Linux sin ella, xvfb-run):
-godot --rendering-driver opengl3 --resolution 1440x900 -- --captura=/ruta/a.png [--arrastrar] [--viajar] [--ajustes] [--api=URL --decir="texto"] [--reglas="a.pdf;b.docx"] [--combate [--ficha]] [--historia] [--lugar] [--nueva] [--propia]
+godot --rendering-driver opengl3 --resolution 1440x900 -- --captura=/ruta/a.png [--arrastrar] [--viajar] [--ajustes] [--api=URL --decir="texto"] [--reglas="a.pdf;b.docx"] [--combate [--ficha]] [--historia] [--lugar] [--nueva] [--propia] [--partidas]
 ```

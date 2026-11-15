@@ -19,14 +19,14 @@ Lo que ya funciona, en un solo PC:
 - Hojas de personaje: cada ficha tiene una hoja de datos libres («Fuerza: 16», «Espada larga: +6, daño 1d8+3») que vale para cualquier reglamento. Se edita con «Ficha de …» y el máster la lee y también puede apuntar datos, por ejemplo al crear un personaje contigo.
 - Reglamentos: con el botón «Reglamentos» (o arrastrando los archivos a la ventana) se cargan manuales en PDF, Word (.docx) o TXT. El juego los lee una vez, los guarda troceados en tu PC y el máster busca en ellos la regla que necesita, citando libro y página. Sin reglamentos, resuelve con una regla sencilla de 1d20 contra dificultad.
 - Exploración fuera de combate: los lugares están enlazados por salidas doradas. Cuando un héroe pisa una, el grupo entero pasa al siguiente mapa, y la niebla se despeja a medida que los héroes avanzan.
-- Guardado automático: la partida (lugares, figuritas, niebla y registro) se guarda sola y se retoma al volver a abrir el juego. El botón «Nueva partida» empieza de cero.
+- Varias partidas a la vez: cada partida (lugares, figuritas, niebla y registro) se guarda sola en su propio archivo y al abrir el juego se retoma la última jugada. El botón «Partidas» enseña todas las guardadas para continuar otra, borrar las que sobran o empezar una nueva. Si un personaje ha crecido en otra aventura, al volver a una partida anterior su ficha se pone al día.
 - El mapa ocupa siempre el centro de la pantalla y se monta a partir de una escena descrita con datos (`data/scenes/*.json`): terreno, figuritas y zonas sin explorar.
 - Figuritas arrastrables con ajuste a la rejilla. El juego rechaza los movimientos a paredes, agua, rocas o casillas ocupadas, y mide la distancia en pies.
 - Bandeja de dados con botones rápidos y notación libre: `2d6+3`, `4d6kh3`, `1d20+5-1d4`.
 - Asientos: varios jugadores en el mismo PC, cada uno con su personaje. Las tiradas y mensajes quedan firmados por el asiento activo.
 - Registro de la partida en el panel derecho, donde habla el máster.
 
-La partida se guarda en la carpeta de datos del juego (`%APPDATA%\\Godot\\app_userdata\\RoleDMFable\\partida.json` en Windows).
+Las partidas se guardan en la carpeta de datos del juego (`%APPDATA%\\Godot\\app_userdata\\RoleDMFable\\partidas\\` en Windows). La partida única de versiones anteriores (`partida.json`) se pasa sola a esa carpeta la primera vez.
 
 Lo siguiente: gráficos definitivos con aspecto 3D, plantillas de área, sonido y partidas en red.
 
