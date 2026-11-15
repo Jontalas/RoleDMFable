@@ -15,6 +15,9 @@ public sealed class Token
     /// <summary>Asiento local que lo controla, o null si lo lleva el máster u otro PC.</summary>
     public int? Seat { get; init; }
 
+    /// <summary>False mientras el personaje esté a medio crear: la aventura no empieza hasta que todos lo estén.</summary>
+    public bool Created { get; internal set; } = true;
+
     internal List<SheetEntry> SheetEntries { get; } = new();
 
     /// <summary>Hoja de personaje: datos libres, para que valga con cualquier reglamento.</summary>
@@ -127,7 +130,7 @@ public sealed class TableState
             {
                 Id = t.Id, Name = t.Name, Kind = t.Kind, X = t.X, Y = t.Y,
                 Hp = Math.Clamp(t.Hp, 0, Math.Max(t.MaxHp, 0)), MaxHp = Math.Max(t.MaxHp, 0),
-                Color = t.Color, Icon = t.Icon, Role = t.Role, Seat = t.Seat,
+                Color = t.Color, Icon = t.Icon, Role = t.Role, Seat = t.Seat, Created = t.Created,
             };
             foreach (var entry in t.Sheet ?? Array.Empty<SheetEntry>())
                 if (CleanEntry(entry.Name, entry.Value) is { } clean && token.SheetEntries.Count < MaxSheetEntries)
@@ -303,7 +306,7 @@ public sealed class TableState
             }
         }
         var tokens = _order.Select(t => new TokenSpec(t.Id, t.Name, t.Kind, t.X, t.Y, t.Hp, t.MaxHp, t.Color, t.Icon, t.Role, t.Seat,
-            t.SheetEntries.Count > 0 ? t.SheetEntries.ToList() : null)).ToList();
+            t.SheetEntries.Count > 0 ? t.SheetEntries.ToList() : null, t.Created)).ToList();
         var combat = Combat is null ? null : new CombatSpec(Combat.Round, Combat.Turn, Combat.Order);
         return new SceneSpec(SceneId, SceneName, Width, Height, CellFeet, Terrain.Floor, features, tokens, unexplored, Exits, combat);
     }
@@ -383,7 +386,7 @@ public sealed class TableState
         {
             Id = spec.Id, Name = spec.Name, Kind = spec.Kind, X = spec.X, Y = spec.Y,
             Hp = Math.Clamp(spec.Hp, 0, maxHp), MaxHp = maxHp,
-            Color = spec.Color, Icon = spec.Icon, Role = spec.Role, Seat = spec.Seat,
+            Color = spec.Color, Icon = spec.Icon, Role = spec.Role, Seat = spec.Seat, Created = spec.Created,
         };
         foreach (var entry in spec.Sheet ?? Array.Empty<SheetEntry>())
             if (CleanEntry(entry.Name, entry.Value) is { } clean && token.SheetEntries.Count < MaxSheetEntries)
@@ -504,6 +507,19 @@ public sealed class TableState
             Changed?.Invoke();
         }
         return clamped;
+    }
+
+    /// <summary>Da por terminado (o por pendiente) un personaje. Devuelve false si la ficha no existe.</summary>
+    public bool SetCreated(string tokenId, bool created)
+    {
+        var token = FindToken(tokenId);
+        if (token is null) return false;
+        if (token.Created != created)
+        {
+            token.Created = created;
+            Changed?.Invoke();
+        }
+        return true;
     }
 
     public const int MaxHpLimit = 9999;

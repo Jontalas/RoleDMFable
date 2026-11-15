@@ -159,16 +159,11 @@ public partial class Main : Control
         {
             // Partida propia: el máster abre la aventura creando el primer lugar.
             Say("Mesa", $"Empieza «{_game.Name}». La partida se guarda sola.");
+            Say("Mesa", "Antes de la aventura se crean los personajes, uno a uno, con el máster y según el reglamento cargado. Cuando estén todos, el máster abrirá la historia.");
             if (HasMaster)
-            {
-                Say("Mesa", "El máster está preparando el primer lugar…");
-                Say("Mesa", "Los héroes empiezan con la ficha vacía. Para crear el tuyo según el reglamento, pulsa «Ficha de…» abajo a la izquierda y luego «Crear con el máster».");
-                _ = AskMaster("Mesa", CampaignSetup.OpeningRequest(_game));
-            }
+                _ = AskMaster("Mesa", CampaignSetup.StartRequest(_game));
             else
-            {
-                Say("Mesa", "Para que el máster abra la aventura, pulsa «Máster IA» arriba, pon tu clave y escribe «empezamos».");
-            }
+                Say("Mesa", "Para empezar, pulsa «Máster IA» arriba, pon tu clave y escribe «empezamos».");
         }
         else if (isNew)
         {
@@ -554,7 +549,7 @@ public partial class Main : Control
 
         if (ActiveToken() is { } sheetOwner)
         {
-            var sheet = Ui.Button($"Ficha de {sheetOwner.Name}", Ui.Parchment, 13);
+            var sheet = Ui.Button(sheetOwner.Created ? $"Ficha de {sheetOwner.Name}" : $"Crear a {sheetOwner.Name}", sheetOwner.Created ? Ui.Parchment : Ui.Gold, 13);
             sheet.CustomMinimumSize = new Vector2(0, 44);
             sheet.TooltipText = "Ver y editar la hoja de personaje";
             sheet.Pressed += () => OpenSheet(sheetOwner.Id);
@@ -695,7 +690,7 @@ public partial class Main : Control
         var dialog = new AcceptDialog { Title = $"Ficha de {token.Name}", OkButtonText = "Guardar", MinSize = new Vector2I(560, 0) };
         dialog.AddCancelButton("Cancelar");
         // El máster crea o completa el personaje preguntando paso a paso según el reglamento cargado.
-        var guided = dialog.AddButton(token.Sheet.Count == 0 ? "Crear con el máster" : "Completar con el máster", true, "master");
+        var guided = dialog.AddButton(!token.Created ? "Crear con el máster" : "Repasar con el máster", true, "master");
         guided.TooltipText = "El máster te guía paso a paso según el reglamento cargado y apunta aquí el resultado";
         guided.Disabled = !HasMaster || _masterBusy;
         dialog.CustomAction += action =>
@@ -703,18 +698,23 @@ public partial class Main : Control
             if (action != "master") return;
             dialog.Hide();
             if (token.Seat is { } seat) SetActiveSeat(seat);
-            _chat.Text = token.Sheet.Count == 0
-                ? $"Quiero crear a {token.Name} paso a paso según el reglamento, antes de seguir con la aventura."
-                : $"Quiero repasar y completar la ficha de {token.Name} según el reglamento.";
+            _chat.Text = !token.Created
+                ? $"Vamos a crear a {token.Name} paso a paso según el reglamento."
+                : $"Quiero repasar la ficha de {token.Name} según el reglamento.";
             SendChat();
         };
         var column = new VBoxContainer();
         column.AddThemeConstantOverride("separation", 10);
         dialog.AddChild(column);
-        if (token.Sheet.Count == 0)
+        CheckBox? finished = null;
+        if (!token.Created)
+        {
             column.AddChild(DialogText(HasMaster
-                ? "Esta ficha está vacía. Pulsa «Crear con el máster» y te irá preguntando según el reglamento cargado, o escríbela tú aquí."
-                : "Esta ficha está vacía. Conecta el máster en «Máster IA» para que te guíe, o escríbela tú aquí.", 800));
+                ? "Este personaje está sin crear. Pulsa «Crear con el máster» y te irá preguntando según el reglamento cargado. La aventura empieza cuando estén todos."
+                : "Este personaje está sin crear. Conecta el máster en «Máster IA» para que te guíe, o escribe tú la ficha aquí.", 800));
+            finished = new CheckBox { Text = "Ya lo he creado yo: dar el personaje por terminado" };
+            finished.AddThemeFontOverride("font", Ui.Body(700));
+        }
         column.AddChild(DialogText(
             "Un dato por línea, con el nombre, dos puntos y el valor. Por ejemplo «Fuerza: 16» o «Espada larga: +6, daño 1d8+3». "
             + "Usa los nombres de tu reglamento. El máster lee esta ficha y también puede apuntar datos en ella.", 600));
@@ -727,6 +727,7 @@ public partial class Main : Control
         editor.AddThemeFontOverride("font", Ui.Body(600));
         editor.AddThemeFontSizeOverride("font_size", 15);
         column.AddChild(editor);
+        if (finished is not null) column.AddChild(finished);
 
         dialog.Confirmed += () =>
         {
@@ -736,6 +737,14 @@ public partial class Main : Control
                 .Where(parts => parts.Length == 2)
                 .Select(parts => new SheetEntry(parts[0], parts[1]));
             _table.ReplaceSheet(tokenId, entries);
+            if (finished is { ButtonPressed: true } && _table.FindToken(tokenId) is { Sheet.Count: > 0 } done)
+            {
+                _table.SetCreated(tokenId, true);
+                Say("Mesa", $"{done.Name} ya está listo para la aventura.");
+                // Si era el último, el máster abre la historia.
+                if (CampaignSetup.PendingHeroes(_game).Count == 0 && _table.SceneId == CampaignSetup.StartSceneId && HasMaster && !_masterBusy)
+                    _ = AskMaster("Mesa", CampaignSetup.OpeningRequest(_game));
+            }
         };
         dialog.VisibilityChanged += () =>
         {
@@ -772,7 +781,7 @@ public partial class Main : Control
         var names = new VBoxContainer { MouseFilter = MouseFilterEnum.Ignore };
         names.AddThemeConstantOverride("separation", -6);
         names.AddChild(Ui.Text(token.Name, 20, title: true));
-        names.AddChild(Ui.Text($"{token.Role} · Asiento {token.Seat}", 12));
+        names.AddChild(Ui.Text(token.Created ? $"{token.Role} · Asiento {token.Seat}" : $"Sin crear · Asiento {token.Seat}", 12, token.Created ? null : Ui.Red, weight: token.Created ? 700 : 800));
         top.AddChild(names);
         content.AddChild(top);
 
@@ -850,7 +859,7 @@ public partial class Main : Control
             return;
         }
         // En el punto de partida todavía no hay aventura: lo primero es que el máster la abra.
-        _ = AskMaster(speaker, _table.SceneId == CampaignSetup.StartSceneId ? $"{text}\n\n({CampaignSetup.OpeningRequest(_game)})" : text);
+        _ = AskMaster(speaker, _table.SceneId == CampaignSetup.StartSceneId ? $"{text}\n\n({CampaignSetup.StartRequest(_game)})" : text);
     }
 
     // ---------- Máster IA ----------
