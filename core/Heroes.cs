@@ -91,5 +91,27 @@ public sealed class HeroStore
         return changed;
     }
 
+    /// <summary>
+    /// Al retomar una partida propia, pone a sus héroes al día con lo que hayan ganado
+    /// en otras aventuras jugadas entretanto. Devuelve los nombres de los que han cambiado.
+    /// </summary>
+    public IReadOnlyList<string> ApplyTo(Campaign game)
+    {
+        var updated = new List<string>();
+        if (!CampaignSetup.IsOwnAdventure(game)) return updated;
+        var saved = LoadAll().ToDictionary(h => h.Id, StringComparer.Ordinal);
+        foreach (var scene in game.Scenes)
+        foreach (var token in scene.Tokens.Where(t => t.Kind == TokenKind.Hero && t.Created).ToList())
+        {
+            if (!saved.TryGetValue(token.Id, out var hero)) continue;
+            var before = (token.MaxHp, Sheet: token.Sheet.ToList());
+            scene.ReplaceSheet(token.Id, hero.Sheet ?? Array.Empty<SheetEntry>());
+            if (hero.MaxHp is >= 1 and <= TableState.MaxHpLimit && hero.MaxHp != token.MaxHp)
+                scene.SetMaxHp(token.Id, hero.MaxHp, heal: false);
+            if (before.MaxHp != token.MaxHp || !before.Sheet.SequenceEqual(token.Sheet)) updated.Add(token.Name);
+        }
+        return updated;
+    }
+
     private string PathFor(string id) => Path.Combine(_folder, id + ".json");
 }

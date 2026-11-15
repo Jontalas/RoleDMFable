@@ -14,7 +14,9 @@ public partial class Main : Control
 {
     private const string ScenesFolder = "res://data/scenes";
     private const string StartScene = "sala_del_puente";
-    private const string SavePath = "user://partida.json";
+    // La partida única de las versiones anteriores: se pasa a la carpeta de partidas al arrancar.
+    private const string LegacySavePath = "user://partida.json";
+    private const string GamesFolder = "user://partidas";
     private const double SaveDelaySeconds = 0.5;
     private const string SettingsPath = "user://ajustes.json";
     private const string RulesFolder = "user://reglamentos";
@@ -53,6 +55,8 @@ public partial class Main : Control
     // Reglamentos: se leen una vez y se guardan troceados en este PC.
     // Personajes guardados: viven fuera de la partida para poder entrar en varias aventuras.
     private HeroStore _heroes = null!;
+    private CampaignStore _games = null!;
+    private string _gameId = "";
 
     private readonly RulesLibrary _rules = new();
     private RulesStore? _rulesStore;
@@ -83,6 +87,9 @@ public partial class Main : Control
         _heroes = new HeroStore(_ephemeral
             ? System.IO.Path.Combine(System.IO.Path.GetTempPath(), "roledmfable-captura-personajes")
             : ProjectSettings.GlobalizePath(HeroesFolder));
+        var captureGames = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "roledmfable-captura-partidas");
+        if (_ephemeral && System.IO.Directory.Exists(captureGames)) System.IO.Directory.Delete(captureGames, recursive: true);
+        _games = new CampaignStore(_ephemeral ? captureGames : ProjectSettings.GlobalizePath(GamesFolder));
 
         var rulesProblems = new List<string>();
         if (!_ephemeral)
@@ -94,9 +101,11 @@ public partial class Main : Control
         GetWindow().FilesDropped += files => _ = ImportRules(files);
 
         string? notice = null;
-        var loaded = _ephemeral ? null : TryLoadSave(out notice);
+        IReadOnlyList<string> grown = Array.Empty<string>();
+        var (loaded, loadedId) = _ephemeral ? (null, null) : TryLoadSave(out notice, out grown);
         BuildLayout();
-        StartGame(loaded ?? NewCampaign(), isNew: loaded is null);
+        StartGame(loaded ?? NewCampaign(), isNew: loaded is null, loadedId);
+        SayGrown(grown);
         if (notice is not null) Say("Mesa", notice);
         foreach (var problem in rulesProblems) Say("Mesa", problem);
         RefreshMasterStatus();
@@ -132,27 +141,72 @@ public partial class Main : Control
         return new Campaign("Partida de prueba", scenes, StartScene);
     }
 
-    private static Campaign? TryLoadSave(out string? notice)
+    /// <summary>Abre la última partida jugada. Si está dañada prueba con la anterior.</summary>
+    private (Campaign?, string?) TryLoadSave(out string? notice, out IReadOnlyList<string> grown)
     {
         notice = null;
-        if (!Godot.FileAccess.FileExists(SavePath)) return null;
+        grown = Array.Empty<string>();
         try
         {
-            return Campaign.FromJson(Godot.FileAccess.GetFileAsString(SavePath));
+            _games.ImportLegacy(ProjectSettings.GlobalizePath(LegacySavePath));
+            foreach (var info in _games.List())
+            {
+                try
+                {
+                    var game = _games.Load(info.Id);
+                    grown = _heroes.ApplyTo(game);
+                    return (game, info.Id);
+                }
+                catch (FormatException e)
+                {
+                    // No se borra: el almacén la aparta por si se puede recuperar a mano.
+                    notice = $"No se pudo cargar la partida «{info.Name}» ({e.Message}). Queda apartada en la carpeta de partidas con el final «.roto».";
+                }
+            }
         }
-        catch (FormatException e)
+        catch (Exception e) when (e is System.IO.IOException or UnauthorizedAccessException)
         {
-            // No se borra: se aparta por si se puede recuperar a mano.
-            DirAccess.RenameAbsolute(SavePath, SavePath + ".roto");
-            notice = $"No se pudo cargar la partida guardada ({e.Message}) y se ha empezado una nueva. La anterior queda apartada como partida.json.roto.";
-            return null;
+            notice = $"No se pudieron leer las partidas guardadas: {e.Message}";
+        }
+        return (null, null);
+    }
+
+    private void SayGrown(IReadOnlyList<string> grown)
+    {
+        if (grown.Count > 0)
+            Say("Mesa", $"{string.Join(", ", grown)}: su ficha se ha puesto al día con lo que ganó en otra aventura.");
+    }
+
+    /// <summary>Deja la partida actual guardada y abre otra de las guardadas.</summary>
+    private bool OpenSavedGame(string id, out string problem)
+    {
+        problem = "";
+        try
+        {
+            if (_saveCountdown >= 0) SaveNow();
+            var game = _games.Load(id);
+            var grown = _heroes.ApplyTo(game);
+            StartGame(game, isNew: false, id);
+            SayGrown(grown);
+            return true;
+        }
+        catch (Exception e) when (e is FormatException or System.IO.IOException or UnauthorizedAccessException)
+        {
+            problem = $"No se pudo abrir: {e.Message}";
+            return false;
         }
     }
 
-    private void StartGame(Campaign game, bool isNew)
+    private void StartGame(Campaign game, bool isNew, string? id = null)
     {
-        if (_game is not null) _game.Changed -= OnGameChanged;
+        if (_game is not null)
+        {
+            // La partida que se deja queda guardada: se puede volver a ella desde «Partidas».
+            if (_saveCountdown >= 0) SaveNow();
+            _game.Changed -= OnGameChanged;
+        }
         _masterTurn?.Cancel();
+        _gameId = id ?? _games.NewId(game.Name);
         _game = game;
         _game.Changed += OnGameChanged;
         _tools = new MasterToolbox(_game, new SystemRandomSource(), _rules);
@@ -212,20 +266,16 @@ public partial class Main : Control
     private void SaveNow()
     {
         _saveCountdown = -1;
-        // Se escribe en un archivo aparte y luego se cambia por el bueno, para no dejarlo a medias.
-        var temp = SavePath + ".tmp";
-        using (var file = Godot.FileAccess.Open(temp, Godot.FileAccess.ModeFlags.Write))
+        try
         {
-            if (file is null)
-            {
-                GD.PushError($"No se pudo guardar la partida: {Godot.FileAccess.GetOpenError()}");
-                return;
-            }
-            file.StoreString(_game.ToJson());
+            _games.Save(_gameId, _game);
+        }
+        catch (Exception e) when (e is System.IO.IOException or UnauthorizedAccessException)
+        {
+            GD.PushError($"No se pudo guardar la partida: {e.Message}");
+            return;
         }
         SaveHeroes();
-        var error = DirAccess.RenameAbsolute(temp, SavePath);
-        if (error != Error.Ok) GD.PushError($"No se pudo guardar la partida: {error}");
     }
 
     /// <summary>Lo que los héroes han ganado en esta partida pasa a sus personajes guardados.</summary>
@@ -262,6 +312,127 @@ public partial class Main : Control
         Say("Mesa", $"El grupo sale de {travel.FromScene}{way} y llega a {travel.ToScene}.");
     }
 
+    private static string WhenPlayed(DateTime when)
+    {
+        var days = (DateTime.Today - when.Date).Days;
+        return days switch
+        {
+            <= 0 => $"hoy a las {when:HH:mm}",
+            1 => $"ayer a las {when:HH:mm}",
+            < 7 => $"hace {days} días",
+            _ => when.ToString("d MMM yyyy", System.Globalization.CultureInfo.GetCultureInfo("es-ES")),
+        };
+    }
+
+    /// <summary>Las partidas guardadas: continuar otra, borrar las que sobran o empezar una nueva.</summary>
+    private void OpenGames()
+    {
+        if (_saveCountdown >= 0) SaveNow();
+        var dialog = new AcceptDialog
+        {
+            Title = "Partidas",
+            OkButtonText = "Seguir jugando",
+            MinSize = new Vector2I(820, 0),
+        };
+        dialog.AddButton("Nueva partida", true, "nueva");
+
+        var column = new VBoxContainer();
+        column.AddThemeConstantOverride("separation", 8);
+        dialog.AddChild(column);
+        column.AddChild(DialogText("Cada partida se guarda sola. Al continuar otra, la actual queda tal como está y los personajes conservan lo que hayan ganado.", 600));
+        var problem = DialogText("", 800);
+        problem.AddThemeColorOverride("font_color", Ui.Red);
+
+        var scroll = new ScrollContainer { CustomMinimumSize = new Vector2(0, 360), HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
+        var list = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        list.AddThemeConstantOverride("separation", 8);
+        scroll.AddChild(list);
+        column.AddChild(scroll);
+        column.AddChild(problem);
+
+        IReadOnlyList<SavedGameInfo> games;
+        try
+        {
+            games = _games.List();
+        }
+        catch (Exception e) when (e is System.IO.IOException or UnauthorizedAccessException)
+        {
+            games = Array.Empty<SavedGameInfo>();
+            problem.Text = $"No se pudieron leer las partidas guardadas: {e.Message}";
+        }
+        if (games.Count == 0 && problem.Text.Length == 0) list.AddChild(DialogText("Todavía no hay ninguna partida guardada.", 700));
+
+        foreach (var info in games)
+        {
+            var current = info.Id == _gameId;
+            var card = Ui.Panel(current ? Ui.PaleGold : Ui.Cream, radius: 12, padding: 10, lift: 2);
+            var row = new HBoxContainer();
+            row.AddThemeConstantOverride("separation", 10);
+            card.AddChild(row);
+            var texts = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+            texts.AddThemeConstantOverride("separation", 0);
+            row.AddChild(texts);
+            var title = Ui.Text(info.Name, 19, Ui.Ink, title: true);
+            title.ClipText = true;
+            texts.AddChild(title);
+            var party = info.Heroes.Count > 0 ? string.Join(", ", info.Heroes) : "sin héroes";
+            var details = Ui.Text($"{party} · en {info.Place} · {WhenPlayed(info.LastPlayed)}", 13, Ui.Ink, weight: 600);
+            details.ClipText = true;
+            texts.AddChild(details);
+
+            if (current)
+            {
+                row.AddChild(Ui.Text("Jugando ahora", 14, Ui.Ink, weight: 800));
+            }
+            else
+            {
+                var open = Ui.Button("Continuar", Ui.Gold, 14);
+                open.Pressed += () =>
+                {
+                    if (OpenSavedGame(info.Id, out var why)) dialog.Hide();
+                    else problem.Text = why;
+                };
+                row.AddChild(open);
+                var forget = Ui.Button("Borrar", Ui.Parchment, 13);
+                forget.TooltipText = "Borra esta partida para siempre. Los personajes guardados no se borran.";
+                forget.Pressed += () =>
+                {
+                    // Dos pulsaciones: borrar una partida no tiene vuelta atrás.
+                    if (forget.Text != "¿Seguro?")
+                    {
+                        forget.Text = "¿Seguro?";
+                        return;
+                    }
+                    try
+                    {
+                        _games.Delete(info.Id);
+                        list.RemoveChild(card);
+                        card.QueueFree();
+                    }
+                    catch (Exception e) when (e is System.IO.IOException or UnauthorizedAccessException)
+                    {
+                        problem.Text = $"No se pudo borrar: {e.Message}";
+                    }
+                };
+                row.AddChild(forget);
+            }
+            list.AddChild(card);
+        }
+
+        dialog.CustomAction += action =>
+        {
+            if (action != "nueva") return;
+            dialog.Hide();
+            AskNewGame();
+        };
+        dialog.VisibilityChanged += () =>
+        {
+            if (!dialog.Visible) dialog.QueueFree();
+        };
+        AddChild(dialog);
+        dialog.PopupCentered();
+    }
+
     private void AskNewGame(IReadOnlyList<HeroSetup>? prefill = null)
     {
         var dialog = new AcceptDialog
@@ -278,7 +449,7 @@ public partial class Main : Control
         column.AddThemeConstantOverride("separation", 8);
         dialog.AddChild(column);
 
-        column.AddChild(DialogText("Al empezar se sustituye la partida guardada. Los reglamentos y la clave del máster se conservan.", 600));
+        column.AddChild(DialogText("La partida actual queda guardada: puedes volver a ella cuando quieras desde «Partidas».", 600));
         column.AddChild(DialogText("Nombre de la aventura", 800));
         var name = Ui.Input("La torre hundida");
         column.AddChild(name);
@@ -519,10 +690,11 @@ public partial class Main : Control
         master.Pressed += OpenSettings;
         row.AddChild(master);
         RefreshMasterStatus();
-        var fresh = Ui.Button("Nueva partida", Ui.Parchment, 13);
-        fresh.CustomMinimumSize = new Vector2(0, 44);
-        fresh.Pressed += () => AskNewGame();
-        row.AddChild(fresh);
+        var games = Ui.Button("Partidas", Ui.Parchment, 13);
+        games.CustomMinimumSize = new Vector2(0, 44);
+        games.TooltipText = "Continuar otra partida guardada o empezar una nueva";
+        games.Pressed += OpenGames;
+        row.AddChild(games);
         return bar;
     }
 
@@ -1268,6 +1440,13 @@ public partial class Main : Control
             _game.Story.AddGoal("Cruzar el puente");
             _game.Story.StartCountdown("Llegan refuerzos goblin", 5);
             _game.Story.AdvanceCountdown("Llegan refuerzos goblin", 2);
+        }
+        if (OS.GetCmdlineUserArgs().Contains("--partidas"))
+        {
+            _games.Save("la_torre_hundida", CampaignSetup.Create("La torre hundida", "", new[] { new HeroSetup("Ánika la Roja", "Bárbara"), new HeroSetup("Fen", "Hechicero") }));
+            _games.Save("el_pantano_de_los_susurros", CampaignSetup.Create("El pantano de los susurros", "", new[] { new HeroSetup("Lira", "Exploradora"), new HeroSetup("Brom", "Herrero") }));
+            _games.Save(_gameId, _game);
+            OpenGames();
         }
         if (OS.GetCmdlineUserArgs().Contains("--nueva"))
         {
