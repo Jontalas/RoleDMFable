@@ -22,6 +22,7 @@ public partial class Main : Control
     private Campaign _game = null!;
     private TableState _table => _game.Current;
     private Label _sceneLabel = null!;
+    private Label _gameLabel = null!;
     private bool _ephemeral;
     private bool _refreshQueued;
     private double _saveCountdown = -1;
@@ -154,7 +155,21 @@ public partial class Main : Control
         foreach (var entry in _game.Log) AppendLog(entry.Who, entry.Text);
         ShowCurrentScene();
 
-        if (isNew)
+        if (isNew && _table.SceneId == CampaignSetup.StartSceneId)
+        {
+            // Partida propia: el máster abre la aventura creando el primer lugar.
+            Say("Mesa", $"Empieza «{_game.Name}». La partida se guarda sola.");
+            if (HasMaster)
+            {
+                Say("Mesa", "El máster está preparando el primer lugar…");
+                _ = AskMaster("Mesa", CampaignSetup.OpeningRequest(_game));
+            }
+            else
+            {
+                Say("Mesa", "Para que el máster abra la aventura, pulsa «Máster IA» arriba, pon tu clave y escribe «empezamos».");
+            }
+        }
+        else if (isNew)
         {
             Say("Mesa", $"Empieza la partida en {_table.SceneName}. Arrastra una figurita para moverla; si un héroe pisa una salida dorada, el grupo pasa al siguiente lugar.");
             Say("Mesa", HasMaster
@@ -171,6 +186,7 @@ public partial class Main : Control
     {
         _map.SetTable(_table);
         _sceneLabel.Text = _table.SceneName;
+        _gameLabel.Text = _game.Name;
         RefreshSeats();
     }
 
@@ -225,22 +241,124 @@ public partial class Main : Control
         Say("Mesa", $"El grupo sale de {travel.FromScene}{way} y llega a {travel.ToScene}.");
     }
 
-    private void AskNewGame()
+    private void AskNewGame(IReadOnlyList<HeroSetup>? prefill = null)
     {
-        var dialog = new ConfirmationDialog
+        var dialog = new AcceptDialog
         {
             Title = "Nueva partida",
-            DialogText = "Se borrará la partida guardada y empezarás de cero.",
-            OkButtonText = "Empezar de cero",
-            CancelButtonText = "Seguir jugando",
+            OkButtonText = "Empezar la aventura",
+            MinSize = new Vector2I(820, 0),
+            DialogHideOnOk = false,
         };
-        dialog.Confirmed += () => StartGame(NewCampaign(), isNew: true);
+        dialog.AddCancelButton("Seguir jugando");
+        dialog.AddButton("Partida de ejemplo", true, "ejemplo");
+
+        var column = new VBoxContainer();
+        column.AddThemeConstantOverride("separation", 8);
+        dialog.AddChild(column);
+
+        column.AddChild(DialogText("Al empezar se sustituye la partida guardada. Los reglamentos y la clave del máster se conservan.", 600));
+        column.AddChild(DialogText("Nombre de la aventura", 800));
+        var name = Ui.Input("La torre hundida");
+        column.AddChild(name);
+        column.AddChild(DialogText("¿De qué queréis que vaya? (opcional)", 800));
+        var premise = Ui.Input("Una frase basta: «buscamos a un mago desaparecido en una ciudad de canales»");
+        column.AddChild(premise);
+
+        column.AddChild(DialogText("Héroes", 800));
+        column.AddChild(DialogText(
+            "Aquí solo va lo básico. Las características, los ataques y los puntos de vida los completa el máster contigo según el reglamento cargado.", 600));
+        var rows = new VBoxContainer();
+        rows.AddThemeConstantOverride("separation", 6);
+        column.AddChild(rows);
+        var add = Ui.Button("Añadir héroe", Ui.Parchment, 14);
+        column.AddChild(add);
+        var problem = DialogText("", 800);
+        problem.AddThemeColorOverride("font_color", Ui.Red);
+        column.AddChild(problem);
+
+        var heroes = new List<(HBoxContainer Row, LineEdit Name, LineEdit Role, OptionButton Look, CheckBox Player)>();
+
+        void AddRow(HeroSetup? hero)
+        {
+            if (heroes.Count >= CampaignSetup.MaxHeroes) return;
+            var row = new HBoxContainer();
+            row.AddThemeConstantOverride("separation", 6);
+            var heroName = Ui.Input("Nombre");
+            heroName.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            heroName.MaxLength = CampaignSetup.MaxNameLength;
+            heroName.Text = hero?.Name ?? "";
+            var role = Ui.Input("Qué es: elfa exploradora");
+            role.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            role.MaxLength = 40;
+            role.Text = hero?.Role ?? "";
+            var look = new OptionButton { CustomMinimumSize = new Vector2(130, 48), TooltipText = "Aspecto de la figurita en el mapa" };
+            look.AddThemeFontOverride("font", Ui.Body(700));
+            foreach (var (label, icon) in CampaignSetup.Looks)
+            {
+                look.AddItem(label);
+                if (hero is not null && hero.Icon == icon) look.Selected = look.ItemCount - 1;
+            }
+            var player = new CheckBox { Text = "Lo lleva un jugador", ButtonPressed = hero?.HasPlayer ?? true, TooltipText = "Sin marcar, acompaña al grupo y lo lleváis entre todos" };
+            player.AddThemeFontOverride("font", Ui.Body(700));
+            var remove = Ui.Button("Quitar", Ui.Parchment, 13);
+            row.AddChild(heroName);
+            row.AddChild(role);
+            row.AddChild(look);
+            row.AddChild(player);
+            row.AddChild(remove);
+            rows.AddChild(row);
+            var entry = (row, heroName, role, look, player);
+            heroes.Add(entry);
+            remove.Pressed += () =>
+            {
+                heroes.Remove(entry);
+                rows.RemoveChild(row);
+                row.QueueFree();
+                add.Disabled = false;
+                dialog.ResetSize();
+            };
+            add.Disabled = heroes.Count >= CampaignSetup.MaxHeroes;
+            dialog.ResetSize();
+        }
+
+        foreach (var hero in prefill ?? new HeroSetup?[] { null, null }) AddRow(hero);
+        add.Pressed += () => AddRow(null);
+
+        dialog.Confirmed += () =>
+        {
+            try
+            {
+                var party = heroes
+                    .Where(h => h.Name.Text.Trim().Length > 0 || h.Role.Text.Trim().Length > 0)
+                    .Select(h => new HeroSetup(h.Name.Text, h.Role.Text, CampaignSetup.Looks[Math.Max(0, h.Look.Selected)].Icon, HasPlayer: h.Player.ButtonPressed))
+                    .ToList();
+                var game = CampaignSetup.Create(name.Text, premise.Text, party);
+                dialog.Hide();
+                StartGame(game, isNew: true);
+            }
+            catch (FormatException e)
+            {
+                problem.Text = e.Message;
+            }
+        };
+        dialog.CustomAction += action =>
+        {
+            if (action != "ejemplo") return;
+            dialog.Hide();
+            StartGame(NewCampaign(), isNew: true);
+        };
         dialog.VisibilityChanged += () =>
         {
             if (!dialog.Visible) dialog.QueueFree();
         };
         AddChild(dialog);
         dialog.PopupCentered();
+        if (prefill is not null)
+        {
+            name.Text = "La torre hundida";
+            premise.Text = "Buscamos a un mago desaparecido en una ciudad de canales";
+        }
     }
 
     // ---------- Construcción de la pantalla ----------
@@ -318,7 +436,8 @@ public partial class Main : Control
         var row = new HBoxContainer();
         row.AddThemeConstantOverride("separation", 16);
         bar.AddChild(row);
-        row.AddChild(Ui.Text("Partida de prueba", 24, Ui.Gold, title: true));
+        _gameLabel = Ui.Text("", 24, Ui.Gold, title: true);
+        row.AddChild(_gameLabel);
         _sceneLabel = Ui.Text("", 15, Ui.Parchment);
         row.AddChild(_sceneLabel);
         row.AddChild(new Control { SizeFlagsHorizontal = SizeFlags.ExpandFill });
@@ -337,7 +456,7 @@ public partial class Main : Control
         RefreshMasterStatus();
         var fresh = Ui.Button("Nueva partida", Ui.Parchment, 13);
         fresh.CustomMinimumSize = new Vector2(0, 44);
-        fresh.Pressed += AskNewGame;
+        fresh.Pressed += () => AskNewGame();
         row.AddChild(fresh);
         return bar;
     }
@@ -711,7 +830,8 @@ public partial class Main : Control
             _noKeyHintShown = true;
             return;
         }
-        _ = AskMaster(speaker, text);
+        // En el punto de partida todavía no hay aventura: lo primero es que el máster la abra.
+        _ = AskMaster(speaker, _table.SceneId == CampaignSetup.StartSceneId ? $"{text}\n\n({CampaignSetup.OpeningRequest(_game)})" : text);
     }
 
     // ---------- Máster IA ----------
@@ -1051,6 +1171,16 @@ public partial class Main : Control
             _game.Story.AddGoal("Cruzar el puente");
             _game.Story.StartCountdown("Llegan refuerzos goblin", 5);
             _game.Story.AdvanceCountdown("Llegan refuerzos goblin", 2);
+        }
+        if (OS.GetCmdlineUserArgs().Contains("--nueva"))
+        {
+            AskNewGame(new[] { new HeroSetup("Ánika la Roja", "Bárbara del norte", "sword"), new HeroSetup("Fen", "Hechicero curioso", "hat"), new HeroSetup("Mulo", "Porteador", "", HasPlayer: false) });
+        }
+        if (OS.GetCmdlineUserArgs().Contains("--propia"))
+        {
+            StartGame(CampaignSetup.Create("La torre hundida", "Buscamos a un mago desaparecido",
+                new[] { new HeroSetup("Ánika la Roja", "Bárbara del norte", "sword"), new HeroSetup("Fen", "Hechicero curioso", "hat"), new HeroSetup("Mulo", "Porteador", "", HasPlayer: false) }), isNew: true);
+            while (_masterBusy) await ToSignal(GetTree().CreateTimer(0.1), SceneTreeTimer.SignalName.Timeout);
         }
         if (OS.GetCmdlineUserArgs().Contains("--lugar"))
         {
