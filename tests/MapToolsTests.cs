@@ -204,6 +204,30 @@ public class MapToolsTests
     }
 
     [Fact]
+    public void CompanionsLeftBehindCanBeBroughtAlong()
+    {
+        var (game, tools) = Start();
+        var first = game.Current;
+        var free = first.FreeCellsNear(first.FindToken("kael")!.X, first.FindToken("kael")!.Y, 1)[0];
+        tools.Execute("poner_ficha", MasterToolboxTests.Input($$"""{"nombre":"Tomás","tipo":"pnj","x":{{free.X}},"y":{{free.Y}},"pv":6}"""));
+
+        var created = tools.Execute("crear_lugar", MasterToolboxTests.Input(Cellar));
+        Assert.Contains("Han llegado juntos todos los héroes", created.Result);
+        Assert.Contains("Tomás (tomas)", created.Result);
+        Assert.Null(game.Current.FindToken("tomas"));
+
+        // Los héroes no se traen, y lo que no existe tampoco.
+        Assert.True(tools.Execute("traer_ficha", MasterToolboxTests.Input("""{"ficha":"kael","x":2,"y":2}""")).IsError);
+        Assert.True(tools.Execute("traer_ficha", MasterToolboxTests.Input("""{"ficha":"nadie","x":2,"y":2}""")).IsError);
+
+        var brought = tools.Execute("traer_ficha", MasterToolboxTests.Input("""{"ficha":"Tomás","x":2,"y":2}"""));
+        Assert.False(brought.IsError, brought.Result);
+        Assert.NotNull(game.Current.FindToken("tomas"));
+        Assert.Null(first.FindToken("tomas"));
+        Assert.True(tools.Execute("traer_ficha", MasterToolboxTests.Input("""{"ficha":"tomas","x":2,"y":2}""")).IsError);
+    }
+
+    [Fact]
     public void TheTurnTextListsTheOtherPlaces()
     {
         var (game, _) = Start();

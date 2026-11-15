@@ -12,7 +12,7 @@ Mesa de rol virtual 2D con máster IA. Godot 4.7.1 (.NET) + C# sobre .NET 10 (LT
 - La historia (`core/Story.cs`, `StoryState` en `Campaign`): escenas, objetivos, PNJ, notas, cuentas atrás, oráculo de sí/no con d10+d8+d6, eventos inesperados y puntos de historia hasta el punto de giro. Es un motor propio inspirado en los juegos de rol en solitario con oráculo; las tablas están redactadas de cero. Los principios de dirección del máster viven en `MasterPrompt.Instructions`, escritos con palabras propias.
 - Los libros del usuario (reglamentos y guías de dirección) son obras con derechos de autor: se cargan en su PC (`BookKind.Rules` / `BookKind.Guide`) y nunca se copian al repositorio, ni su texto ni sus tablas literales.
 - El mapa es siempre visible y se genera a partir de datos (`SceneSpec`), nunca de una imagen suelta: así lo que narra el máster y lo que se ve coinciden. Se usa igual dentro y fuera de combate.
-- El máster construye los lugares de la aventura con herramientas (`crear_lugar` con un plano de texto `. # ~ = o`, `ir_a_lugar`, `poner_ficha`, `quitar_ficha`, `cambiar_terreno`, `revelar_zona`): todo pasa por `Campaign`/`TableState`, que validan antes de tocar la partida.
+- El máster construye los lugares de la aventura con herramientas (`crear_lugar` con un plano de texto `. # ~ = o`, `ir_a_lugar`, `poner_ficha`, `traer_ficha`, `quitar_ficha`, `cambiar_terreno`, `revelar_zona`): todo pasa por `Campaign`/`TableState`, que validan antes de tocar la partida.
 - La IA no calcula números ni tira dados: pedirá acciones mediante herramientas y `core/` las ejecuta.
 - Estilo visual: contorno grueso `Ui.Ink`, colores planos, tipografías Baloo 2 (títulos) y Nunito (texto). Usar los ayudantes de `Ui.cs`.
 

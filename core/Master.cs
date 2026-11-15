@@ -73,6 +73,9 @@ public sealed class MasterToolbox
         new MasterTool("poner_ficha",
             "Pone en el lugar actual una criatura o un personaje no jugador nuevo. Úsala antes de narrar que alguien aparece. Devuelve su id.",
             TokenSchema),
+        new MasterTool("traer_ficha",
+            "Trae al lugar actual a un personaje o criatura que se quedó en otro lugar: un acompañante que sigue al grupo, un enemigo que lo persigue. Los héroes viajan siempre juntos y no la necesitan.",
+            """{"type":"object","properties":{"ficha":{"type":"string","description":"Id o nombre de la ficha que está en otro lugar"},"x":{"type":"integer","description":"Columna junto a la que aparece"},"y":{"type":"integer","description":"Fila junto a la que aparece"}},"required":["ficha","x","y"]}"""),
         new MasterTool("quitar_ficha",
             "Quita del mapa una ficha que ya no está: se ha ido, ha huido o se retira su cuerpo. No vale para héroes.",
             """{"type":"object","properties":{"ficha":{"type":"string","description":"Id de la ficha"}},"required":["ficha"]}"""),
@@ -142,6 +145,7 @@ public sealed class MasterToolbox
                 "ir_a_lugar" => GoToPlace(input),
                 "poner_ficha" => PlaceToken(input),
                 "quitar_ficha" => RemoveToken(input),
+                "traer_ficha" => BringToken(input),
                 "cambiar_terreno" => ChangeTerrain(input),
                 "revelar_zona" => RevealZone(input),
                 _ => Fail($"No existe la herramienta «{name}»."),
@@ -188,11 +192,12 @@ public sealed class MasterToolbox
         Announced?.Invoke(token.Name, $"se mueve {move.Feet} pies.");
         var message = $"{token.Name} está ahora en ({token.X}, {token.Y}) tras moverse {move.Feet} pies.";
 
+        var left = _game.Current;
         var travel = _game.TryTravel(token.Id);
         if (travel is not null)
         {
             Travelled?.Invoke(travel);
-            message += $" Ha pisado una salida y el grupo ha pasado de {travel.FromScene} a {travel.ToScene}.\n\n"
+            message += $" Ha pisado una salida y el grupo ha pasado de {travel.FromScene} a {travel.ToScene}. {DescribeArrival(left)}\n\n"
                 + MasterPrompt.DescribeTable(_game.Current);
         }
         return new ToolOutcome(message);
@@ -343,7 +348,7 @@ public sealed class MasterToolbox
 
         var travel = _game.MoveParty(id, arriveX, arriveY, wayIn?.Label ?? "");
         if (travel is not null) Travelled?.Invoke(travel);
-        return new ToolOutcome($"Creado «{name}» (id {id}) y el grupo ya está allí. Los jugadores ven el mapa nuevo.\n\n{MasterPrompt.DescribeTable(_game.Current)}");
+        return new ToolOutcome($"Creado «{name}» (id {id}) y el grupo ya está allí. Los jugadores ven el mapa nuevo. {DescribeArrival(from)}\n\n{MasterPrompt.DescribeTable(_game.Current)}");
     }
 
     private ToolOutcome GoToPlace(IReadOnlyDictionary<string, JsonElement> input)
@@ -363,7 +368,7 @@ public sealed class MasterToolbox
         var travel = _game.MoveParty(to.SceneId, x, y);
         if (travel is null) return Fail($"El grupo no cabe junto a ({x}, {y}) en {to.SceneName}. Elige otra casilla.");
         Travelled?.Invoke(travel);
-        return new ToolOutcome($"El grupo ha pasado de {travel.FromScene} a {travel.ToScene}.\n\n{MasterPrompt.DescribeTable(_game.Current)}");
+        return new ToolOutcome($"El grupo ha pasado de {travel.FromScene} a {travel.ToScene}. {DescribeArrival(from)}\n\n{MasterPrompt.DescribeTable(_game.Current)}");
     }
 
     private ToolOutcome PlaceToken(IReadOnlyDictionary<string, JsonElement> input)
@@ -377,6 +382,33 @@ public sealed class MasterToolbox
     }
 
     private static bool InTable(Token token, TableState table) => table.FindToken(token.Id) == token;
+
+    private ToolOutcome BringToken(IReadOnlyDictionary<string, JsonElement> input)
+    {
+        var wanted = Text(input, "ficha");
+        int x = Int(input, "x"), y = Int(input, "y");
+        if (!_game.Current.InBounds(x, y)) return Fail($"La casilla ({x}, {y}) está fuera del mapa.");
+        if (FindToken(wanted) is { } here) return Fail($"{here.Name} ya está en este lugar, en ({here.X}, {here.Y}).");
+        var token = _game.BringToken(wanted, x, y);
+        if (token is null)
+        {
+            var elsewhere = _game.Scenes.Where(s => s != _game.Current)
+                .SelectMany(s => s.Tokens.Where(t => t.Kind != TokenKind.Hero).Select(t => $"{t.Id} (en {s.SceneName})")).ToList();
+            return Fail($"No se puede traer «{wanted}»: no está en otro lugar, hay varias con ese nombre o no hay sitio libre. Fichas en otros lugares: {(elsewhere.Count > 0 ? string.Join(", ", elsewhere) : "ninguna")}.");
+        }
+        return new ToolOutcome($"{token.Name} (id {token.Id}) está ahora aquí, en ({token.X}, {token.Y}).");
+    }
+
+    /// <summary>Lo que el máster debe saber tras un cambio de lugar: quién ha llegado y quién se ha quedado atrás.</summary>
+    private string DescribeArrival(TableState from)
+    {
+        var heroes = _game.Current.Tokens.Where(t => t.Kind == TokenKind.Hero).Select(t => t.Name).ToList();
+        var text = $"Han llegado juntos todos los héroes: {string.Join(", ", heroes)}.";
+        var behind = from.Tokens.Where(t => t.Kind != TokenKind.Hero && t.Hp > 0).Select(t => $"{t.Name} ({t.Id})").ToList();
+        if (behind.Count > 0)
+            text += $" Se han quedado en {from.SceneName}: {string.Join(", ", behind)}. Si alguno acompaña o persigue al grupo, tráelo con traer_ficha; si no, no lo narres aquí.";
+        return text;
+    }
 
     private ToolOutcome RemoveToken(IReadOnlyDictionary<string, JsonElement> input)
     {
@@ -754,6 +786,9 @@ public static class MasterPrompt
         - Si se pasa andando de un lugar a otro, indica la puerta: quedan unidos por salidas de ida y vuelta y los jugadores podrán volver solos. Para volver a un lugar conocido sin salida directa, usa ir_a_lugar.
         - Cuando alguien aparezca, poner_ficha; cuando se vaya o ya no pinte nada, quitar_ficha. Cuando lo que ocurre cambie el sitio (una puerta abierta, un derrumbe, un puente roto), cambiar_terreno.
         - No rehagas un lugar que ya existe ni crees uno por cada frase: un lugar nuevo es un cambio de escena.
+        - El mapa no es una jaula. Sus bordes son solo el final de lo dibujado, no el final del mundo. Si los jugadores dicen que salen, se marchan, siguen un camino o van a otro sitio, y en la ficción es posible, no les contestes que no hay salida: crea el lugar al que van y llévalos. Que el plano no tenga una salida dibujada nunca es motivo para negarlo. Solo se lo impide algo concreto de la historia (una reja cerrada, un derrumbe, un guardia), y entonces les dices qué es y dejas al menos una forma de superarlo.
+        - Todo lugar que crees necesita al menos una manera de seguir adelante, además de por donde se entró. Si no la dibujas como salida, tenla pensada y ofrécela en cuanto la busquen.
+        - Los héroes viajan siempre todos juntos: al cambiar de lugar pasan todos, también los que no tienen jugador. Los demás personajes se quedan donde estaban salvo que los traigas con traer_ficha. Antes de decir dónde está alguien, mira la lista de fichas del estado: lo que diga esa lista es la verdad, no lo que recuerdes del relato.
 
         Reglas
         - Si el estado indica que hay reglamentos cargados, esas son las reglas de la mesa. Antes de resolver algo que dependa de ellas (un ataque, una maniobra, un conjuro, una prueba), búscalo con consultar_reglas y aplica lo que diga el texto. No cites de memoria: si no lo has leído en la consulta, no lo des por regla. Cuando ayude, di de dónde sale (libro y página) en pocas palabras.

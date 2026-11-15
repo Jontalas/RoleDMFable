@@ -182,6 +182,27 @@ public sealed class Campaign
         return new TravelResult(from.SceneName, to.SceneName, label, party.Select(t => t.Name).ToList());
     }
 
+    /// <summary>
+    /// Trae al lugar actual una ficha que se quedó en otro (un acompañante, un perseguidor).
+    /// Devuelve null si no existe fuera de aquí, hay varias con ese nombre, es un héroe o no hay sitio.
+    /// </summary>
+    public Token? BringToken(string idOrName, int x, int y)
+    {
+        var found = _scenes.Values.Where(s => s != Current)
+            .SelectMany(s => s.Tokens.Select(t => (Scene: s, Token: t)))
+            .Where(f => f.Token.Kind != TokenKind.Hero
+                && (string.Equals(f.Token.Id, idOrName, StringComparison.OrdinalIgnoreCase) || string.Equals(f.Token.Name, idOrName, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        if (found.Count != 1 || Current.FindToken(found[0].Token.Id) is not null) return null;
+        var cells = Current.FreeCellsNear(x, y, 1);
+        if (cells.Count == 0) return null;
+        var (scene, token) = found[0];
+        scene.DeleteToken(token.Id);
+        Current.AddToken(token, cells[0].X, cells[0].Y);
+        Current.NotifyChanged();
+        return token;
+    }
+
     public string ToJson() => JsonSerializer.Serialize(
         new CampaignSave(SaveVersion, Name, Current.SceneId, Scenes.Select(s => s.ToSpec()).ToList(), _log.ToList(), Story.ToSave()),
         JsonOptions);
