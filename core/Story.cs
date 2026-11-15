@@ -58,7 +58,8 @@ public sealed record StorySave(
     IReadOnlyList<string>? Allies = null,
     IReadOnlyList<string>? Enemies = null,
     IReadOnlyList<string>? Notes = null,
-    IReadOnlyList<Countdown>? Countdowns = null);
+    IReadOnlyList<Countdown>? Countdowns = null,
+    string Premise = "");
 
 /// <summary>
 /// El hilo de la historia: escenas numeradas, objetivos, personajes importantes, cuentas atrás
@@ -73,6 +74,7 @@ public sealed class StoryState
     public const int MaxListEntries = 12;
     public const int MaxTextLength = 160;
     public const int MaxCountdowns = 4;
+    public const int MaxPremiseLength = 600;
     public const int MaxCountdownSteps = 12;
 
     private static readonly string[] Degrees = { "bajo", "medio", "alto" };
@@ -158,6 +160,8 @@ public sealed class StoryState
         TurningPoint = Math.Clamp(save.TurningPoint, 1, 200);
         EventUsedThisScene = save.EventUsedThisScene;
         FinalGoal = Clean(save.FinalGoal);
+        var premise = (save.Premise ?? "").Trim();
+        Premise = premise.Length > MaxPremiseLength ? premise[..MaxPremiseLength] : premise;
         Fill(_goals, save.Goals);
         Fill(_allies, save.Allies);
         Fill(_enemies, save.Enemies);
@@ -179,6 +183,8 @@ public sealed class StoryState
     public bool PastTurningPoint => Points >= TurningPoint;
     public bool EventUsedThisScene { get; private set; }
     public string FinalGoal { get; private set; }
+    /// <summary>La idea de aventura que pidieron los jugadores al crear la partida.</summary>
+    public string Premise { get; }
     public IReadOnlyList<string> Goals => _goals;
     public IReadOnlyList<string> Allies => _allies;
     public IReadOnlyList<string> Enemies => _enemies;
@@ -186,7 +192,7 @@ public sealed class StoryState
     public IReadOnlyList<Countdown> Countdowns => _countdowns;
 
     public StorySave ToSave() => new(Scene, SceneTitle, Points, TurningPoint, EventUsedThisScene, FinalGoal,
-        _goals.ToList(), _allies.ToList(), _enemies.ToList(), _notes.ToList(), _countdowns.ToList());
+        _goals.ToList(), _allies.ToList(), _enemies.ToList(), _notes.ToList(), _countdowns.ToList(), Premise);
 
     // ---------- Oráculo ----------
 

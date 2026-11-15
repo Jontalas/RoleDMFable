@@ -8,7 +8,7 @@ public sealed class Token
     public int X { get; internal set; }
     public int Y { get; internal set; }
     public int Hp { get; internal set; }
-    public int MaxHp { get; init; }
+    public int MaxHp { get; internal set; }
     public string Color { get; init; } = "#888888";
     public string Icon { get; init; } = "";
     public string Role { get; init; } = "";
@@ -504,6 +504,22 @@ public sealed class TableState
             Changed?.Invoke();
         }
         return clamped;
+    }
+
+    public const int MaxHpLimit = 9999;
+
+    /// <summary>
+    /// Fija los puntos de vida máximos, por ejemplo al crear el personaje o al subir de nivel.
+    /// Si <paramref name="heal"/> es true la ficha queda al máximo; si no, conserva los que tenía sin pasarse.
+    /// </summary>
+    public int SetMaxHp(string tokenId, int maxHp, bool heal)
+    {
+        var token = FindToken(tokenId) ?? throw new ArgumentException($"No existe la ficha «{tokenId}».", nameof(tokenId));
+        if (maxHp < 1 || maxHp > MaxHpLimit) throw new ArgumentException($"Los PV máximos tienen que estar entre 1 y {MaxHpLimit}.");
+        token.MaxHp = maxHp;
+        token.Hp = heal ? maxHp : Math.Min(token.Hp, maxHp);
+        Changed?.Invoke();
+        return token.Hp;
     }
 
     public void Reveal(int x0, int y0, int w, int h)

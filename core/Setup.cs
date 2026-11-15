@@ -1,0 +1,81 @@
+namespace RoleDMFable.Core;
+
+/// <summary>Un héroe tal como lo define su jugador al empezar una partida.</summary>
+/// <param name="MaxHp">Provisional: el máster lo fija según el reglamento al completar la hoja.</param>
+public sealed record HeroSetup(string Name, string Role = "", string Icon = "", int MaxHp = 10, bool HasPlayer = true);
+
+/// <summary>Monta una partida propia: nombre, idea de la aventura y héroes del grupo.</summary>
+public static class CampaignSetup
+{
+    public const string StartSceneId = "punto_de_partida";
+    public const int MaxHeroes = 6;
+    public const int MaxHeroHp = 999;
+    public const int MaxNameLength = 30;
+
+    /// <summary>Aspectos que sabe dibujar el mapa, con el nombre que ve el jugador.</summary>
+    public static readonly IReadOnlyList<(string Label, string Icon)> Looks = new[]
+    {
+        ("Guerrero", "sword"), ("Mago", "hat"), ("Clérigo", "sun"), ("Druida", "mushroom"), ("Aventurero", ""),
+    };
+
+    private static readonly string[] Colors = { "#3f6fbf", "#7c4fb3", "#1f8a7a", "#c98a2b", "#b8472f", "#5b8f3a" };
+
+    /// <summary>
+    /// Crea la partida con el grupo reunido en un claro vacío, a la espera de que el máster abra la aventura.
+    /// Lanza <see cref="FormatException"/> con un mensaje para el jugador si algo no vale.
+    /// </summary>
+    public static Campaign Create(string name, string premise, IReadOnlyList<HeroSetup> heroes)
+    {
+        if (heroes.Count == 0) throw new FormatException("Hace falta al menos un héroe.");
+        if (heroes.Count > MaxHeroes) throw new FormatException($"Como mucho {MaxHeroes} héroes.");
+
+        var tokens = new List<TokenSpec>();
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        var seat = 0;
+        for (var i = 0; i < heroes.Count; i++)
+        {
+            var hero = heroes[i];
+            var heroName = hero.Name.Trim();
+            if (heroName.Length == 0) throw new FormatException($"El héroe {i + 1} no tiene nombre.");
+            if (heroName.Length > MaxNameLength) heroName = heroName[..MaxNameLength];
+            if (hero.MaxHp < 1 || hero.MaxHp > MaxHeroHp) throw new FormatException($"Los PV de {heroName} tienen que estar entre 1 y {MaxHeroHp}.");
+            if (Looks.All(l => l.Icon != hero.Icon)) throw new FormatException($"El aspecto de {heroName} no vale.");
+
+            var id = new string(RulesText.Fold(heroName).Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray()).Trim('_');
+            while (id.Contains("__")) id = id.Replace("__", "_");
+            if (id.Length == 0) id = $"heroe_{i + 1}";
+            if (!ids.Add(id)) throw new FormatException($"Hay dos héroes llamados «{heroName}».");
+
+            var role = hero.Role.Trim();
+            if (role.Length > 40) role = role[..40];
+            // El grupo empieza junto, en el centro del claro.
+            tokens.Add(new TokenSpec(id, heroName, TokenKind.Hero, 4 + i % 3, 3 + i / 3, hero.MaxHp, hero.MaxHp,
+                Colors[i % Colors.Length], hero.Icon, role, hero.HasPlayer ? ++seat : null));
+        }
+        if (seat == 0) throw new FormatException("Al menos un héroe tiene que llevarlo un jugador.");
+
+        var start = new SceneSpec(StartSceneId, "Punto de partida", 10, 8, Features: new[]
+        {
+            new FeatureSpec(Terrain.Rock, 1, 1), new FeatureSpec(Terrain.Rock, 8, 2), new FeatureSpec(Terrain.Rock, 2, 6), new FeatureSpec(Terrain.Rock, 7, 6),
+        }, Tokens: tokens);
+
+        var title = name.Trim();
+        if (title.Length > 40) title = title[..40];
+        var idea = premise.Trim();
+        if (idea.Length > StoryState.MaxPremiseLength) idea = idea[..StoryState.MaxPremiseLength];
+        return new Campaign(title.Length > 0 ? title : "Aventura nueva", new[] { start }, StartSceneId, story: new StorySave(Premise: idea));
+    }
+
+    /// <summary>Lo que se le pide al máster para que abra una partida recién creada.</summary>
+    public static string OpeningRequest(Campaign game)
+    {
+        var idea = game.Story.Premise.Length > 0
+            ? $"La idea que han pedido los jugadores: {game.Story.Premise}"
+            : "Los jugadores no han pedido nada concreto: propón tú un arranque con gancho.";
+        return "Empieza una aventura nueva. El grupo está en «Punto de partida», que es solo una sala de espera sin historia. "
+            + idea
+            + " Abre la aventura: crea el primer lugar con crear_lugar (sin puerta: no se vuelve al punto de partida), con los personajes que haya; "
+            + "abre la primera escena con nueva_escena; apunta el objetivo final si la idea lo deja claro; y presenta la situación en pocas frases, "
+            + "terminando con algo que invite a los héroes a actuar. Si las hojas de los héroes están vacías y hay reglamento cargado, ofréceles después completarlas.";
+    }
+}
