@@ -40,17 +40,56 @@ public class SetupTests
         Assert.Contains("crear_lugar", CampaignSetup.OpeningRequest(game));
     }
 
+    private const string Market = """{"nombre":"Plaza del mercado","plano":["........","........","...oo...","........","........"],"llegada":{"x":1,"y":1}}""";
+
     [Fact]
-    public void TheMasterCanOpenTheAdventureFromTheStartingPoint()
+    public void TheAdventureCannotStartUntilEveryHeroIsCreated()
     {
-        var game = CampaignSetup.Create("X", "", Party);
+        var game = CampaignSetup.Create("X", "Un dragón duerme bajo el pueblo", Party);
         var tools = new MasterToolbox(game, new SystemRandomSource());
 
-        var outcome = tools.Execute("crear_lugar", MasterToolboxTests.Input(
-            """{"nombre":"Plaza del mercado","plano":["........","........","...oo...","........","........"],"llegada":{"x":1,"y":1}}"""));
+        Assert.Equal(3, CampaignSetup.PendingHeroes(game).Count);
+        Assert.Contains("FASE: CREACIÓN DE PERSONAJES", MasterPrompt.BuildTurn(game, "Fen", "hola"));
+        Assert.Contains("PERSONAJE SIN CREAR", MasterPrompt.DescribeTable(game.Current));
+        Assert.Contains("primero hay que crear los personajes", CampaignSetup.StartRequest(game));
 
+        var refused = tools.Execute("crear_lugar", MasterToolboxTests.Input(Market));
+        Assert.True(refused.IsError);
+        Assert.Contains("Fen", refused.Result);
+        Assert.Equal(CampaignSetup.StartSceneId, game.Current.SceneId);
+
+        // Una hoja vacía no se puede dar por terminada.
+        Assert.True(tools.Execute("personaje_listo", MasterToolboxTests.Input("""{"ficha":"fen"}""")).IsError);
+
+        foreach (var id in new[] { "anika_la_roja", "fen", "mulo" })
+        {
+            tools.Execute("anotar_ficha", MasterToolboxTests.Input($$"""{"ficha":"{{id}}","dato":"Fuerza","valor":"12"}"""));
+            var done = tools.Execute("personaje_listo", MasterToolboxTests.Input($$"""{"ficha":"{{id}}"}"""));
+            Assert.False(done.IsError, done.Result);
+            if (id == "mulo") Assert.Contains("crear_lugar", done.Result);
+            else Assert.Contains("Faltan por crear", done.Result);
+        }
+
+        Assert.Empty(CampaignSetup.PendingHeroes(game));
+        Assert.DoesNotContain("FASE: CREACIÓN", MasterPrompt.BuildTurn(game, "Fen", "hola"));
+        Assert.Contains("Abre la aventura", CampaignSetup.StartRequest(game));
+        var outcome = tools.Execute("crear_lugar", MasterToolboxTests.Input(Market));
         Assert.False(outcome.IsError, outcome.Result);
         Assert.Equal(3, game.Current.Tokens.Count(t => t.Kind == TokenKind.Hero));
+    }
+
+    [Fact]
+    public void CreationProgressIsSavedAndOldGamesCountAsCreated()
+    {
+        var game = CampaignSetup.Create("X", "", Party);
+        game.Current.SetSheetEntry("fen", "Fuerza", "12");
+        game.Current.SetCreated("fen", true);
+
+        var loaded = Campaign.FromJson(game.ToJson());
+        Assert.Equal(new[] { "anika_la_roja", "mulo" }, CampaignSetup.PendingHeroes(loaded).Select(t => t.Id));
+
+        // La partida de ejemplo y las guardadas antes de este cambio no tienen fase de creación.
+        Assert.Empty(CampaignSetup.PendingHeroes(MasterToolboxTests.NewGame()));
     }
 
     [Fact]

@@ -50,7 +50,8 @@ public sealed record TokenSpec(
     string Icon = "",
     string Role = "",
     int? Seat = null,
-    IReadOnlyList<SheetEntry>? Sheet = null);
+    IReadOnlyList<SheetEntry>? Sheet = null,
+    bool Created = true);
 
 /// <summary>
 /// Un lugar descrito con datos, no con un dibujo. El máster describe la escena así

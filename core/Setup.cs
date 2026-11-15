@@ -50,7 +50,7 @@ public static class CampaignSetup
             if (role.Length > 40) role = role[..40];
             // El grupo empieza junto, en el centro del claro.
             tokens.Add(new TokenSpec(id, heroName, TokenKind.Hero, 4 + i % 3, 3 + i / 3, hero.MaxHp, hero.MaxHp,
-                Colors[i % Colors.Length], hero.Icon, role, hero.HasPlayer ? ++seat : null));
+                Colors[i % Colors.Length], hero.Icon, role, hero.HasPlayer ? ++seat : null, Created: false));
         }
         if (seat == 0) throw new FormatException("Al menos un héroe tiene que llevarlo un jugador.");
 
@@ -66,6 +66,28 @@ public static class CampaignSetup
         return new Campaign(title.Length > 0 ? title : "Aventura nueva", new[] { start }, StartSceneId, story: new StorySave(Premise: idea));
     }
 
+    /// <summary>Los héroes que todavía no están creados, en cualquier lugar de la partida.</summary>
+    public static IReadOnlyList<Token> PendingHeroes(Campaign game) =>
+        game.Scenes.SelectMany(s => s.Tokens).Where(t => t.Kind == TokenKind.Hero && !t.Created).ToList();
+
+    /// <summary>Lo que toca hacer en el punto de partida: crear personajes o, si ya están, abrir la aventura.</summary>
+    public static string StartRequest(Campaign game) => PendingHeroes(game).Count > 0 ? CreationRequest(game) : OpeningRequest(game);
+
+    /// <summary>Lo que se le pide al máster mientras queden personajes por crear.</summary>
+    public static string CreationRequest(Campaign game)
+    {
+        var pending = PendingHeroes(game);
+        var names = string.Join(", ", pending.Select(t => t.Seat is null ? $"{t.Name} (sin jugador: créalo tú deprisa, preguntando al grupo solo lo esencial)" : t.Name));
+        return "La aventura todavía no ha empezado: primero hay que crear los personajes. "
+            + $"Faltan por crear: {names}. "
+            + "No narres historia ni crees lugares. Crea un personaje cada vez, empezando por el de quien te habla o por el primero de la lista: "
+            + "busca el proceso de creación en el reglamento con consultar_reglas y síguelo en su orden; en cada mensaje pide una sola decisión al jugador, "
+            + "con las opciones que da el manual explicadas en una línea cada una; tira con tirar_dados lo que el manual mande tirar; apunta cada resultado con anotar_ficha "
+            + "y fija los puntos de vida con fijar_pv_maximos (con curar). Si no hay reglamento cargado, usa una creación breve: concepto, tres puntos fuertes, un punto débil, "
+            + "equipo y puntos de vida. Cuando un personaje esté completo, repásalo en dos líneas, pide el visto bueno de su jugador y márcalo con personaje_listo. "
+            + "Después pasa al siguiente. Cuando no quede ninguno, la aventura podrá empezar.";
+    }
+
     /// <summary>Lo que se le pide al máster para que abra una partida recién creada.</summary>
     public static string OpeningRequest(Campaign game)
     {
@@ -76,6 +98,6 @@ public static class CampaignSetup
             + idea
             + " Abre la aventura: crea el primer lugar con crear_lugar (sin puerta: no se vuelve al punto de partida), con los personajes que haya; "
             + "abre la primera escena con nueva_escena; apunta el objetivo final si la idea lo deja claro; y presenta la situación en pocas frases, "
-            + "terminando con algo que invite a los héroes a actuar. Si las hojas de los héroes están vacías y hay reglamento cargado, ofréceles después completarlas.";
+            + "terminando con algo que invite a los héroes a actuar. Los personajes ya están creados: usa lo que digan sus hojas.";
     }
 }
