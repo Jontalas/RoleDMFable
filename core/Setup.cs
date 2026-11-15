@@ -76,6 +76,7 @@ public static class CampaignSetup
             + idea
             + " Abre la aventura: crea el primer lugar con crear_lugar (sin puerta: no se vuelve al punto de partida), con los personajes que haya; "
             + "abre la primera escena con nueva_escena; apunta el objetivo final si la idea lo deja claro; y presenta la situación en pocas frases, "
-            + "terminando con algo que invite a los héroes a actuar. Si las hojas de los héroes están vacías y hay reglamento cargado, ofréceles después completarlas.";
+            + "terminando con algo que invite a los héroes a actuar. Las hojas de los héroes están vacías: cierra tu mensaje, en una frase aparte, "
+            + "ofreciendo crear los personajes paso a paso según el reglamento antes de seguir, o jugar ya y completarlos sobre la marcha.";
     }
 }

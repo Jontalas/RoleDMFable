@@ -162,6 +162,7 @@ public partial class Main : Control
             if (HasMaster)
             {
                 Say("Mesa", "El máster está preparando el primer lugar…");
+                Say("Mesa", "Los héroes empiezan con la ficha vacía. Para crear el tuyo según el reglamento, pulsa «Ficha de…» abajo a la izquierda y luego «Crear con el máster».");
                 _ = AskMaster("Mesa", CampaignSetup.OpeningRequest(_game));
             }
             else
@@ -693,9 +694,27 @@ public partial class Main : Control
         if (token is null) return;
         var dialog = new AcceptDialog { Title = $"Ficha de {token.Name}", OkButtonText = "Guardar", MinSize = new Vector2I(560, 0) };
         dialog.AddCancelButton("Cancelar");
+        // El máster crea o completa el personaje preguntando paso a paso según el reglamento cargado.
+        var guided = dialog.AddButton(token.Sheet.Count == 0 ? "Crear con el máster" : "Completar con el máster", true, "master");
+        guided.TooltipText = "El máster te guía paso a paso según el reglamento cargado y apunta aquí el resultado";
+        guided.Disabled = !HasMaster || _masterBusy;
+        dialog.CustomAction += action =>
+        {
+            if (action != "master") return;
+            dialog.Hide();
+            if (token.Seat is { } seat) SetActiveSeat(seat);
+            _chat.Text = token.Sheet.Count == 0
+                ? $"Quiero crear a {token.Name} paso a paso según el reglamento, antes de seguir con la aventura."
+                : $"Quiero repasar y completar la ficha de {token.Name} según el reglamento.";
+            SendChat();
+        };
         var column = new VBoxContainer();
         column.AddThemeConstantOverride("separation", 10);
         dialog.AddChild(column);
+        if (token.Sheet.Count == 0)
+            column.AddChild(DialogText(HasMaster
+                ? "Esta ficha está vacía. Pulsa «Crear con el máster» y te irá preguntando según el reglamento cargado, o escríbela tú aquí."
+                : "Esta ficha está vacía. Conecta el máster en «Máster IA» para que te guíe, o escríbela tú aquí.", 800));
         column.AddChild(DialogText(
             "Un dato por línea, con el nombre, dos puntos y el valor. Por ejemplo «Fuerza: 16» o «Espada larga: +6, daño 1d8+3». "
             + "Usa los nombres de tu reglamento. El máster lee esta ficha y también puede apuntar datos en ella.", 600));
@@ -1181,6 +1200,7 @@ public partial class Main : Control
             StartGame(CampaignSetup.Create("La torre hundida", "Buscamos a un mago desaparecido",
                 new[] { new HeroSetup("Ánika la Roja", "Bárbara del norte", "sword"), new HeroSetup("Fen", "Hechicero curioso", "hat"), new HeroSetup("Mulo", "Porteador", "", HasPlayer: false) }), isNew: true);
             while (_masterBusy) await ToSignal(GetTree().CreateTimer(0.1), SceneTreeTimer.SignalName.Timeout);
+            if (OS.GetCmdlineUserArgs().Contains("--ficha") && ActiveToken() is { } own) OpenSheet(own.Id);
         }
         if (OS.GetCmdlineUserArgs().Contains("--lugar"))
         {
